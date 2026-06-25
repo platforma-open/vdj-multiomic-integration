@@ -1,0 +1,7 @@
+sampleId,cellId,feature,umiCount
+s1,cellA,AGX,4
+s1,cellA,BGX,1
+s2,cellB,AGX,4
+s2,cellB,BGX,1
+s1,cellC,AGX,5
+s1,cellZ,AGX,3
