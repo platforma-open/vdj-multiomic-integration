@@ -1,0 +1,13 @@
+// Placeholder workflow. The real per-clonotype aggregation pipeline (bundle the per-cell feature
+// column + VDJ cellLinker -> csvFileBuilder -> run aggregate_clonotypes.py -> import per-clonotype
+// columns reusing the scClonotypeKey axis; optional GEX mean/max + dominant annotation) lands in
+// plan Tasks 3-4. Until then this stub builds and produces no outputs, so the model, UI and block
+// compose and build end to end.
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+
+wf.body(func(args) {
+	return {
+		outputs: {},
+		exports: {}
+	}
+})

@@ -1,0 +1,26 @@
+{
+  "name": "@platforma-open/milaboratories.vdj-multiomic-integration.test",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Block tests",
+  "keywords": [],
+  "files": [],
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "fmt": "ts-builder format",
+    "check": "ts-builder check --target block-test"
+  },
+  "dependencies": {
+    "this-block": "workspace:@platforma-open/milaboratories.vdj-multiomic-integration@*"
+  },
+  "devDependencies": {
+    "@milaboratories/ts-builder": "catalog:",
+    "@milaboratories/ts-configs": "catalog:",
+    "@platforma-sdk/test": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "typescript": "*"
+  }
+}

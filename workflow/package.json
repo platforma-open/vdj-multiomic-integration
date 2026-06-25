@@ -1,0 +1,22 @@
+{
+  "name": "@platforma-open/milaboratories.vdj-multiomic-integration.workflow",
+  "version": "1.0.0",
+  "description": "Block Workflow",
+  "type": "module",
+  "scripts": {
+    "build": "shx rm -rf dist && pl-tengo build",
+    "test": "vitest",
+    "format": "/usr/bin/env emacs --script ./format.el || echo 'No emacs.'",
+    "check": "pl-tengo check"
+  },
+  "dependencies": {
+    "@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes": "workspace:*",
+    "@platforma-sdk/workflow-tengo": "catalog:"
+  },
+  "devDependencies": {
+    "@platforma-sdk/tengo-builder": "catalog:",
+    "@platforma-sdk/test": "catalog:",
+    "shx": "catalog:"
+  },
+  "peerDependencies": {}
+}
