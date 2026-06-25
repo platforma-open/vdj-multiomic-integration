@@ -1,12 +1,91 @@
 <script setup lang="ts">
-import { PlAlert, PlBlockPage } from "@platforma-sdk/ui-vue";
+import {
+  PlAgDataTableV2,
+  PlAlert,
+  PlBlockPage,
+  PlBtnGhost,
+  PlBtnGroup,
+  PlDropdown,
+  PlDropdownRef,
+  PlNumberField,
+  PlSlideModal,
+  usePlDataTableSettingsV2,
+} from "@platforma-sdk/ui-vue";
+import { ref } from "vue";
+import { useApp } from "../app";
+
+const app = useApp();
+const settingsOpen = ref(false);
+
+const expressionMethodOptions: { label: string; value: "mean" | "max" }[] = [
+  { label: "Mean", value: "mean" },
+  { label: "Max", value: "max" },
+];
+
+const tableSettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.clonotypeTable,
+});
 </script>
 
 <template>
   <PlBlockPage>
     <template #title>VDJ Multiomic Integration</template>
-    <PlAlert type="info">
-      Input selection and the per-clonotype results table are added in upcoming tasks.
+    <template #append>
+      <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
+    </template>
+
+    <PlAgDataTableV2
+      v-if="app.model.outputs.clonotypeTable"
+      v-model="app.model.data.tableState"
+      :settings="tableSettings"
+      show-export-button
+    />
+    <PlAlert v-else type="info">
+      Per-clonotype results appear once the aggregation workflow is implemented (plan Tasks 3-4).
+      Configure inputs via Settings.
     </PlAlert>
+
+    <PlSlideModal v-model="settingsOpen">
+      <template #title>Settings</template>
+      <PlDropdownRef
+        v-model="app.model.data.datasetRef"
+        :options="app.model.outputs.datasetOptions"
+        label="VDJ single-cell dataset"
+      />
+      <PlDropdown
+        v-model="app.model.data.featureColumnId"
+        :options="app.model.outputs.featureOptions"
+        label="Feature Integration per-cell column"
+      />
+      <PlDropdown
+        v-model="app.model.data.gexColumnId"
+        :options="app.model.outputs.gexOptions"
+        label="Gene expression (optional)"
+      />
+      <PlDropdown
+        v-model="app.model.data.annotationColumnId"
+        :options="app.model.outputs.annotationOptions"
+        label="Cell-type annotation (optional)"
+      />
+      <PlNumberField
+        v-model="app.model.data.dominanceThreshold"
+        label="Dominance threshold"
+        :min-value="0.5"
+        :max-value="1.0"
+        :step="0.05"
+      />
+      <PlNumberField
+        v-model="app.model.data.presenceThreshold"
+        label="Presence threshold"
+        :min-value="0.0"
+        :max-value="1.0"
+        :step="0.05"
+      />
+      <PlBtnGroup
+        v-model="app.model.data.expressionMethod"
+        :options="expressionMethodOptions"
+        label="Expression aggregation"
+      />
+    </PlSlideModal>
   </PlBlockPage>
 </template>
