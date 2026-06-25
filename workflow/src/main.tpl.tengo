@@ -1,13 +1,49 @@
-// Placeholder workflow. The real per-clonotype aggregation pipeline (bundle the per-cell feature
-// column + VDJ cellLinker -> csvFileBuilder -> run aggregate_clonotypes.py -> import per-clonotype
-// columns reusing the scClonotypeKey axis; optional GEX mean/max + dominant annotation) lands in
-// plan Tasks 3-4. Until then this stub builds and produces no outputs, so the model, UI and block
-// compose and build end to end.
+// VDJ Multiomic Integration — top-level workflow.
+//
+// Resolves the input bundle (the VDJ dataset anchor, the Feature Integration per-cell column, the
+// dataset's cell linker resolved by spec, and the optional GEX / annotation columns) and delegates
+// the per-clonotype aggregation to an ephemeral template that awaits the bundle's data. The linker
+// is resolved here by selector under the anchor — the model does not pass a linker id (its args
+// lambda has no ctx); see docs/aggregation-contract.md.
 wf := import("@platforma-sdk/workflow-tengo:workflow")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+
+aggregateTpl := assets.importTemplate(":aggregate")
 
 wf.body(func(args) {
+	bundleBuilder := wf.createPBundleBuilder()
+	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
+	bundleBuilder.addSingle(args.featureColumnId) // Feature Integration per-cell feature column (anchored id)
+	bundleBuilder.addSingle({ name: "pl7.app/sc/cellLinker" }, "linker") // cellLinker resolved by spec under the anchor
+
+	if args.gexColumnId != undefined {
+		bundleBuilder.addSingle(args.gexColumnId)
+	}
+	if args.annotationColumnId != undefined {
+		bundleBuilder.addSingle(args.annotationColumnId)
+	}
+
+	columns := bundleBuilder.build()
+
+	result := render.createEphemeral(aggregateTpl, {
+		columns: columns,
+		featureColumnId: args.featureColumnId,
+		gexColumnId: args.gexColumnId,
+		annotationColumnId: args.annotationColumnId,
+		dominanceThreshold: args.dominanceThreshold,
+		presenceThreshold: args.presenceThreshold,
+		expressionMethod: args.expressionMethod,
+		hasGex: args.gexColumnId != undefined,
+		hasAnnotation: args.annotationColumnId != undefined
+	})
+
 	return {
-		outputs: {},
-		exports: {}
+		outputs: {
+			clonotypeTable: result.output("clonotypeTable")
+		},
+		exports: {
+			clonotypeProperties: result.output("clonotypeProperties")
+		}
 	}
 })

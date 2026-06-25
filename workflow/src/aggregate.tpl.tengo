@@ -1,0 +1,245 @@
+// Per-clonotype aggregation (ephemeral). Awaits the PColumnBundle (specs first, data when ready),
+// materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and
+// imports the per-clonotype columns reusing the scClonotypeKey axis (and feature/featureId,
+// rna-seq/geneId) verbatim so they join the existing clonotype table. No sample axis (spec A-0005).
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+
+aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
+
+self.awaitState("columns", "PColumnBundle")
+
+self.body(func(inputs) {
+	columns := inputs.columns
+	hasGex := inputs.hasGex
+	hasAnnotation := inputs.hasAnnotation
+
+	featureSpec := columns.getSpec(inputs.featureColumnId)
+	linkerSpec := columns.getSpec("linker")
+
+	// feature column -> CSV (sampleId, cellId, feature, umiCount)
+	featCsv := pframes.csvFileBuilder()
+	featCsv.add(columns.getColumn(inputs.featureColumnId), { header: "umiCount" })
+	featCsv.setAxisHeader(featureSpec.axesSpec[0].name, "sampleId")
+	featCsv.setAxisHeader(featureSpec.axesSpec[1].name, "cellId")
+	featCsv.setAxisHeader(featureSpec.axesSpec[2].name, "feature")
+	featCsv.mem("8GiB")
+	featCsv.cpu(1)
+
+	// cellLinker -> CSV (sampleId, cellId, scClonotypeKey); the linker value column is unused by the Python
+	linkerCsv := pframes.csvFileBuilder()
+	linkerCsv.add(columns.getColumn("linker"), { header: "linker" })
+	linkerCsv.setAxisHeader(linkerSpec.axesSpec[0].name, "sampleId")
+	linkerCsv.setAxisHeader(linkerSpec.axesSpec[1].name, "cellId")
+	linkerCsv.setAxisHeader(linkerSpec.axesSpec[2].name, "scClonotypeKey")
+	linkerCsv.mem("8GiB")
+	linkerCsv.cpu(1)
+
+	run := exec.builder().
+		software(aggSw).
+		mem("16GiB").
+		cpu(4).
+		addFile("features.csv", featCsv.build()).
+		addFile("linker.csv", linkerCsv.build()).
+		arg("--feature-csv").arg("features.csv").
+		arg("--linker-csv").arg("linker.csv").
+		arg("--dominance-threshold").arg(string(inputs.dominanceThreshold)).
+		arg("--presence-threshold").arg(string(inputs.presenceThreshold)).
+		arg("--output-prefix").arg("result")
+
+	if hasGex {
+		gexSpec := columns.getSpec(inputs.gexColumnId)
+		gexCsv := pframes.csvFileBuilder()
+		gexCsv.add(columns.getColumn(inputs.gexColumnId), { header: "count" })
+		gexCsv.setAxisHeader(gexSpec.axesSpec[0].name, "sampleId")
+		gexCsv.setAxisHeader(gexSpec.axesSpec[1].name, "cellId")
+		gexCsv.setAxisHeader(gexSpec.axesSpec[2].name, "geneId")
+		gexCsv.mem("8GiB")
+		gexCsv.cpu(1)
+		run = run.addFile("gex.csv", gexCsv.build()).
+			arg("--gex-csv").arg("gex.csv").
+			arg("--expression-method").arg(inputs.expressionMethod)
+	}
+
+	if hasAnnotation {
+		annSpec := columns.getSpec(inputs.annotationColumnId)
+		annCsv := pframes.csvFileBuilder()
+		annCsv.add(columns.getColumn(inputs.annotationColumnId), { header: "cellType" })
+		annCsv.setAxisHeader(annSpec.axesSpec[0].name, "sampleId")
+		annCsv.setAxisHeader(annSpec.axesSpec[1].name, "cellId")
+		annCsv.mem("8GiB")
+		annCsv.cpu(1)
+		run = run.addFile("annotation.csv", annCsv.build()).
+			arg("--annotation-csv").arg("annotation.csv")
+	}
+
+	run = run.
+		saveFile("result_counts.csv").
+		saveFile("result_fractions.csv").
+		saveFile("result_properties.csv")
+	if hasGex {
+		run = run.saveFile("result_expression.csv")
+	}
+	if hasAnnotation {
+		run = run.saveFile("result_annotation.csv")
+	}
+	run = run.run()
+
+	// axes reused verbatim from the input columns -> outputs join the existing clonotype table
+	scAxis := linkerSpec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
+	featAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
+
+	trace := pSpec.makeTrace(featureSpec, {
+		type: "milaboratories.vdj-multiomic-integration",
+		importance: 30,
+		label: "VDJ Multiomic Integration"
+	})
+
+	fb := pframes.pFrameBuilder()
+	injectAll := func(rawPf) {
+		for k, v in rawPf {
+			fb.add(k, trace.inject(v.spec), v.data)
+		}
+	}
+
+	// per-feature UMI count matrix (clonotype x feature)
+	injectAll(xsv.importFile(run.getFile("result_counts.csv"), "csv", {
+		axes: [
+			{ column: "scClonotypeKey", spec: scAxis },
+			{ column: "feature", spec: featAxis }
+		],
+		columns: [{
+			column: "count", id: "count",
+			spec: {
+				name: "pl7.app/feature/clonotypeUmiCount", valueType: "Int",
+				annotations: {
+					"pl7.app/label": "Antigen UMI count",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/table/visibility": "optional"
+				}
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}, { splitDataAndSpec: true }))
+
+	// per-feature fractions (clonotype x feature)
+	injectAll(xsv.importFile(run.getFile("result_fractions.csv"), "csv", {
+		axes: [
+			{ column: "scClonotypeKey", spec: scAxis },
+			{ column: "feature", spec: featAxis }
+		],
+		columns: [{
+			column: "fraction", id: "fraction",
+			spec: {
+				name: "pl7.app/feature/clonotypeFraction", valueType: "Double",
+				annotations: {
+					"pl7.app/label": "Antigen fraction",
+					"pl7.app/format": ".3f",
+					"pl7.app/table/visibility": "default"
+				}
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}, { splitDataAndSpec: true }))
+
+	// per-clonotype scalar properties: restriction index, breadth, dominant feature
+	injectAll(xsv.importFile(run.getFile("result_properties.csv"), "csv", {
+		axes: [{ column: "scClonotypeKey", spec: scAxis }],
+		columns: [
+			{
+				column: "restrictionIndex", id: "ri",
+				spec: {
+					name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
+					annotations: {
+						"pl7.app/label": "Restriction index",
+						"pl7.app/format": ".3f",
+						"pl7.app/table/visibility": "default"
+					}
+				}
+			},
+			{
+				column: "breadth", id: "breadth",
+				spec: {
+					name: "pl7.app/vdj/breadth", valueType: "Int",
+					annotations: {
+						"pl7.app/label": "Breadth",
+						"pl7.app/table/visibility": "default"
+					}
+				}
+			},
+			{
+				column: "dominantFeature", id: "dom",
+				spec: {
+					name: "pl7.app/feature/dominantFeature", valueType: "String",
+					annotations: {
+						"pl7.app/label": "Dominant antigen",
+						"pl7.app/isDiscreteFilter": "true",
+						"pl7.app/table/visibility": "default"
+					}
+				}
+			}
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}, { splitDataAndSpec: true }))
+
+	// optional per-clonotype gene expression (clonotype x gene), aggregation method in the domain
+	if hasGex {
+		gexSpec := columns.getSpec(inputs.gexColumnId)
+		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId
+		exprLabel := inputs.expressionMethod == "max" ? "Max expression" : "Mean expression"
+		injectAll(xsv.importFile(run.getFile("result_expression.csv"), "csv", {
+			axes: [
+				{ column: "scClonotypeKey", spec: scAxis },
+				{ column: "geneId", spec: geneAxis }
+			],
+			columns: [{
+				column: "expression", id: "expression",
+				spec: {
+					name: "pl7.app/rna-seq/clonotypeExpression", valueType: "Double",
+					domain: { "pl7.app/feature/aggregation": inputs.expressionMethod },
+					annotations: {
+						"pl7.app/label": exprLabel,
+						"pl7.app/format": ".3f",
+						"pl7.app/table/visibility": "optional"
+					}
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		}, { splitDataAndSpec: true }))
+	}
+
+	// optional per-clonotype dominant cell type
+	if hasAnnotation {
+		injectAll(xsv.importFile(run.getFile("result_annotation.csv"), "csv", {
+			axes: [{ column: "scClonotypeKey", spec: scAxis }],
+			columns: [{
+				column: "dominantCellType", id: "domCellType",
+				spec: {
+					name: "pl7.app/rna-seq/clonotypeDominantCellType", valueType: "String",
+					annotations: {
+						"pl7.app/label": "Dominant cell type",
+						"pl7.app/isDiscreteFilter": "true",
+						"pl7.app/table/visibility": "default"
+					}
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		}, { splitDataAndSpec: true }))
+	}
+
+	finalPf := fb.build()
+
+	return {
+		clonotypeTable: pframes.exportFrame(finalPf),
+		clonotypeProperties: finalPf
+	}
+})
