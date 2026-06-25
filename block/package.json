@@ -1,0 +1,52 @@
+{
+  "name": "@platforma-open/milaboratories.vdj-multiomic-integration",
+  "version": "1.0.0",
+  "files": [
+    "index.d.ts",
+    "index.js"
+  ],
+  "scripts": {
+    "build": "shx rm -rf ./block-pack && block-tools pack",
+    "mark-stable": "block-tools mark-stable -r 's3://milab-euce1-prod-pkgs-s3-block-registry/pub/releases/?region=eu-central-1'",
+    "prepublishOnly": "block-tools pack && block-tools publish -r 's3://milab-euce1-prod-pkgs-s3-block-registry/pub/releases/?region=eu-central-1'",
+    "do-pack": "shx rm -f *.tgz && block-tools pack && pnpm pack && shx mv *.tgz package.tgz"
+  },
+  "dependencies": {
+    "@platforma-open/milaboratories.vdj-multiomic-integration.model": "workspace:*",
+    "@platforma-open/milaboratories.vdj-multiomic-integration.ui": "workspace:*",
+    "@platforma-open/milaboratories.vdj-multiomic-integration.workflow": "workspace:*",
+    "@platforma-sdk/model": "catalog:"
+  },
+  "devDependencies": {
+    "@platforma-sdk/block-tools": "catalog:",
+    "shx": "catalog:"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "block": {
+    "components": {
+      "workflow": "@platforma-open/milaboratories.vdj-multiomic-integration.workflow/dist/tengo/tpl/main.plj.gz",
+      "model": "@platforma-open/milaboratories.vdj-multiomic-integration.model/dist/model.json",
+      "ui": "@platforma-open/milaboratories.vdj-multiomic-integration.ui/dist"
+    },
+    "meta": {
+      "title": "VDJ Multiomic Integration",
+      "logo": "file:../logos/block-logo.png",
+      "url": "https://github.com/platforma-open/vdj-multiomic-integration",
+      "support": "mailto:support@milaboratories.com",
+      "description": "Aggregate per-cell feature data onto VDJ clonotypes: restriction index, breadth, dominant feature, per-feature fractions, and optional gene expression.",
+      "longDescription": "file:../docs/description.md",
+      "changelog": "file:../CHANGELOG.md",
+      "tags": [
+        "single-cell",
+        "vdj",
+        "clonotype",
+        "beam"
+      ],
+      "organization": {
+        "name": "MiLaboratories Inc",
+        "url": "https://milaboratories.com/",
+        "logo": "file:../logos/organization-logo.png"
+      }
+    }
+  }
+}
