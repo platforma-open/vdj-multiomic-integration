@@ -1,10 +1,10 @@
 import type { InferOutputsType } from "@platforma-sdk/model";
 import {
-  ArrayColumnProvider,
   BlockModelV3,
   createPlDataTableStateV2,
   createPlDataTableV3,
   DataModelBuilder,
+  OutputColumnProvider,
 } from "@platforma-sdk/model";
 import type { BlockArgs, BlockData } from "./types";
 
@@ -69,19 +69,42 @@ export const platforma = BlockModelV3.create(dataModel)
         ])
       : [],
   )
-  // Per-clonotype results table (latest builder: createPlDataTableV3). Resolves the workflow's
-  // clonotypeTable PFrame; undefined until the aggregation workflow (plan Tasks 3-4) emits it, so
-  // the UI guards it with v-if.
-  .outputWithStatus("clonotypeTable", (ctx) => {
-    const cols = ctx.outputs?.resolve("clonotypeTable")?.getPColumns();
-    if (!cols) return undefined;
-    return createPlDataTableV3(ctx, {
-      columns: new ArrayColumnProvider(cols)
-        .getAllColumns()
-        .map((column) => ({ column, isPrimary: true })),
-      tableState: ctx.data.tableState,
-    });
-  })
+  // True while the main run is executing (no output/context field settled yet) — drives the block
+  // spinner via the app.ts progress callback. The Python aggregation is a long-running (16 GiB) step.
+  .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
+  // Per-clonotype results table. Resolves the workflow's clonotypeTable PFrame; undefined until the
+  // workflow emits it, so the UI guards it with v-if.
+  //
+  // Use the self-contained discovery form of createPlDataTableV3 with `sources` scoped to our OWN
+  // exported PFrame (mirrors feature-integration / 3d-structure-prediction). The array-columns form
+  // runs discoverLabelColumnVariants, which enumerates the ENTIRE result pool to find axis labels and
+  // blocks forever on the upstream Samples&Data FASTQ File-dataset. `sources: [OutputColumnProvider(acc)]`
+  // confines column + label discovery to this block's columns; maxHops:0 disables linker traversal
+  // since the PFrame is self-contained. retentive avoids blanking the grid on recompute; withStatus
+  // feeds PlAgDataTableV2 the OutputWithStatus envelope. NB: under maxHops:0 the scClonotypeKey /
+  // featureId axis labels resolve only from within our PFrame — verify label rendering in the Task-7
+  // backend test.
+  .output(
+    "clonotypeTable",
+    (ctx) => {
+      const acc = ctx.outputs?.resolve("clonotypeTable");
+      if (acc === undefined) return undefined;
+      const snapshots = new OutputColumnProvider(acc).getAllColumns();
+      if (snapshots.length === 0) return undefined;
+      // Anchor on any value-bearing column — discovery is axis-driven, only its axesSpec matters.
+      const anchorSpec = (snapshots.find((s) => s.spec.name !== "pl7.app/label") ?? snapshots[0])
+        .spec;
+      return createPlDataTableV3(ctx, {
+        columns: {
+          sources: [new OutputColumnProvider(acc)],
+          anchors: { main: anchorSpec },
+          selector: { mode: "enrichment", maxHops: 0 },
+        },
+        tableState: ctx.data.tableState,
+      });
+    },
+    { retentive: true, withStatus: true },
+  )
   .title(() => "VDJ Multiomic Integration")
   .sections(() => [{ type: "link" as const, href: "/" as const, label: "Main" }])
   .done();
