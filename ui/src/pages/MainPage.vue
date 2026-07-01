@@ -41,8 +41,8 @@ const tableSettings = usePlDataTableSettingsV2({
       show-export-button
     />
     <PlAlert v-else type="info">
-      Per-clonotype results appear once the aggregation workflow is implemented (plan Tasks 3-4).
-      Configure inputs via Settings.
+      Select the VDJ single-cell dataset and Feature Integration column via Settings, then run the
+      block to see per-clonotype results.
     </PlAlert>
 
     <PlSlideModal v-model="settingsOpen">
