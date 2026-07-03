@@ -14,7 +14,12 @@ import { ref } from "vue";
 import { useApp } from "../app";
 
 const app = useApp();
-const settingsOpen = ref(false);
+// Auto-open Settings when the block is first added and its required inputs are
+// unset (mirrors feature-integration). Local ref initialised from data — never
+// a watcher writing back to data (would be a hairpin).
+const settingsOpen = ref(
+  app.model.data.datasetRef === undefined || app.model.data.featureColumnId === undefined,
+);
 
 const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.clonotypeTable,
@@ -45,11 +50,13 @@ const tableSettings = usePlDataTableSettingsV2({
         v-model="app.model.data.datasetRef"
         :options="app.model.outputs.datasetOptions"
         label="VDJ single-cell dataset"
+        required
       />
       <PlDropdown
         v-model="app.model.data.featureColumnId"
         :options="app.model.outputs.featureOptions"
         label="Feature Integration per-cell column"
+        required
       />
       <PlDropdown
         v-model="app.model.data.annotationColumnId"
