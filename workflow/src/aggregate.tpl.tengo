@@ -37,9 +37,25 @@ self.body(func(inputs) {
 	featCsv.mem("8GiB")
 	featCsv.cpu(1)
 
-	// cellLinker -> CSV (sampleId, cellId, scClonotypeKey); the linker value column is unused by the Python
+	// cellLinker -> CSV (sampleId, cellId, scClonotypeKey); the linker value column is unused by the Python.
+	// Strip the isLinkerColumn marker before export: as a linker, csvFileBuilder/ptabler build a
+	// linker_index that requires exactly 2 connected components and reject this 3-axis cell linker
+	// [sampleId, cellId, scClonotypeKey]. We only need the axis tuple as flat rows, so export it as a
+	// plain column (same Parquet data, just not flagged as a linker).
+	linkerCol := columns.getColumn("linker")
+	linkerAnnotations := {}
+	for k, v in linkerCol.spec.annotations {
+		if k != "pl7.app/isLinkerColumn" {
+			linkerAnnotations[k] = v
+		}
+	}
+	linkerSpecPlain := {}
+	for k, v in linkerCol.spec {
+		linkerSpecPlain[k] = v
+	}
+	linkerSpecPlain.annotations = linkerAnnotations
 	linkerCsv := pframes.csvFileBuilder()
-	linkerCsv.add(columns.getColumn("linker"), { header: "linker" })
+	linkerCsv.add({ spec: linkerSpecPlain, data: linkerCol.data }, { header: "linker" })
 	linkerCsv.setAxisHeader(linkerSpec.axesSpec[0].name, "sampleId")
 	linkerCsv.setAxisHeader(linkerSpec.axesSpec[1].name, "cellId")
 	linkerCsv.setAxisHeader(linkerSpec.axesSpec[2].name, "scClonotypeKey")
