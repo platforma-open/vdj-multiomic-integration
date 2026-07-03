@@ -25,6 +25,10 @@ export const platforma = BlockModelV3.create(dataModel)
     return {
       datasetRef: data.datasetRef,
       featureColumnId: data.featureColumnId,
+      // DORMANT (v1 = categorical properties only): gexColumnId + presenceThreshold +
+      // expressionMethod feed numerical outputs (gene expression, breadth) that v1 does not emit.
+      // Kept in args so the numerical-properties plan re-activates them by restoring the UI controls,
+      // not by reshaping args. See workflow/src/aggregate.tpl.tengo.
       gexColumnId: data.gexColumnId,
       annotationColumnId: data.annotationColumnId,
       // canonicalize + clamp to the 0.5 floor (A-0012)
@@ -53,6 +57,9 @@ export const platforma = BlockModelV3.create(dataModel)
         ])
       : [],
   )
+  // DORMANT (v1 = categorical only): GEX drives the deferred numerical expression output; no UI
+  // control currently sets gexColumnId. Kept so the numerical-properties plan restores the GEX
+  // dropdown without re-adding this query.
   // Optional per-cell gene-expression count matrix
   .output("gexOptions", (ctx) =>
     ctx.data.datasetRef

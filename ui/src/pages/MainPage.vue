@@ -4,7 +4,6 @@ import {
   PlAlert,
   PlBlockPage,
   PlBtnGhost,
-  PlBtnGroup,
   PlDropdown,
   PlDropdownRef,
   PlNumberField,
@@ -16,11 +15,6 @@ import { useApp } from "../app";
 
 const app = useApp();
 const settingsOpen = ref(false);
-
-const expressionMethodOptions: { label: string; value: "mean" | "max" }[] = [
-  { label: "Mean", value: "mean" },
-  { label: "Max", value: "max" },
-];
 
 const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.clonotypeTable,
@@ -58,11 +52,6 @@ const tableSettings = usePlDataTableSettingsV2({
         label="Feature Integration per-cell column"
       />
       <PlDropdown
-        v-model="app.model.data.gexColumnId"
-        :options="app.model.outputs.gexOptions"
-        label="Gene expression (optional)"
-      />
-      <PlDropdown
         v-model="app.model.data.annotationColumnId"
         :options="app.model.outputs.annotationOptions"
         label="Cell-type annotation (optional)"
@@ -73,18 +62,6 @@ const tableSettings = usePlDataTableSettingsV2({
         :min-value="0.5"
         :max-value="1.0"
         :step="0.05"
-      />
-      <PlNumberField
-        v-model="app.model.data.presenceThreshold"
-        label="Presence threshold"
-        :min-value="0.0"
-        :max-value="1.0"
-        :step="0.05"
-      />
-      <PlBtnGroup
-        v-model="app.model.data.expressionMethod"
-        :options="expressionMethodOptions"
-        label="Expression aggregation"
       />
     </PlSlideModal>
   </PlBlockPage>

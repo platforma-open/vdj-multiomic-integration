@@ -1,7 +1,14 @@
 // Per-clonotype aggregation (ephemeral). Awaits the PColumnBundle (specs first, data when ready),
 // materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and
-// imports the per-clonotype columns reusing the scClonotypeKey axis (and feature/featureId,
-// rna-seq/geneId) verbatim so they join the existing clonotype table. No sample axis (spec A-0005).
+// imports the per-clonotype columns reusing the scClonotypeKey axis verbatim so they join the
+// existing clonotype table. No sample axis (spec A-0005).
+//
+// v1 SCOPE — categorical properties only (operator directive 2026-07-02). The block emits only the
+// dominant-category-rule columns: dominantFeature, and dominantCellType when an annotation input is
+// provided. The numerical properties (per-feature UMI counts / fractions, restrictionIndex, breadth,
+// gene expression) are DEFERRED to a separate numerical-properties plan. The Python aggregator still
+// computes them; the workflow simply does not import them yet, and the GEX branch below is kept
+// intact but dormant (inert while no UI exposes gexColumnId) so re-activation is additive.
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
@@ -77,11 +84,12 @@ self.body(func(inputs) {
 			arg("--annotation-csv").arg("annotation.csv")
 	}
 
+	// v1 retrieves only the properties CSV (source of the categorical dominantFeature) and, when an
+	// annotation is provided, the annotation CSV (dominantCellType). The counts/fractions CSVs are
+	// written by the Python but not retrieved — deferred numerical outputs.
 	run = run.
-		saveFile("result_counts.csv").
-		saveFile("result_fractions.csv").
 		saveFile("result_properties.csv")
-	if hasGex {
+	if hasGex { // DORMANT (v1 categorical-only): expression is numerical, deferred; inert while gexColumnId is unset
 		run = run.saveFile("result_expression.csv")
 	}
 	if hasAnnotation {
@@ -89,9 +97,8 @@ self.body(func(inputs) {
 	}
 	run = run.run()
 
-	// axes reused verbatim from the input columns -> outputs join the existing clonotype table
+	// axis reused verbatim from the input columns -> outputs join the existing clonotype table
 	scAxis := linkerSpec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
-	featAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
 
 	trace := pSpec.makeTrace(featureSpec, {
 		type: "milaboratories.vdj-multiomic-integration",
@@ -106,73 +113,12 @@ self.body(func(inputs) {
 		}
 	}
 
-	// per-feature UMI count matrix (clonotype x feature)
-	injectAll(xsv.importFile(run.getFile("result_counts.csv"), "csv", {
-		axes: [
-			{ column: "scClonotypeKey", spec: scAxis },
-			{ column: "feature", spec: featAxis }
-		],
-		columns: [{
-			column: "count", id: "count",
-			spec: {
-				name: "pl7.app/feature/clonotypeUmiCount", valueType: "Int",
-				annotations: {
-					"pl7.app/label": "Antigen UMI count",
-					"pl7.app/isAbundance": "true",
-					"pl7.app/table/visibility": "optional"
-				}
-			}
-		}],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}, { splitDataAndSpec: true }))
-
-	// per-feature fractions (clonotype x feature)
-	injectAll(xsv.importFile(run.getFile("result_fractions.csv"), "csv", {
-		axes: [
-			{ column: "scClonotypeKey", spec: scAxis },
-			{ column: "feature", spec: featAxis }
-		],
-		columns: [{
-			column: "fraction", id: "fraction",
-			spec: {
-				name: "pl7.app/feature/clonotypeFraction", valueType: "Double",
-				annotations: {
-					"pl7.app/label": "Antigen fraction",
-					"pl7.app/format": ".3f",
-					"pl7.app/table/visibility": "default"
-				}
-			}
-		}],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}, { splitDataAndSpec: true }))
-
-	// per-clonotype scalar properties: restriction index, breadth, dominant feature
+	// per-clonotype categorical property: dominant antigen (dominant-category rule, spec A-0012).
+	// v1 imports only this column from result_properties.csv; the CSV's restrictionIndex and breadth
+	// columns (numerical) are computed by the Python but left unimported — deferred.
 	injectAll(xsv.importFile(run.getFile("result_properties.csv"), "csv", {
 		axes: [{ column: "scClonotypeKey", spec: scAxis }],
 		columns: [
-			{
-				column: "restrictionIndex", id: "ri",
-				spec: {
-					name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
-					annotations: {
-						"pl7.app/label": "Restriction index",
-						"pl7.app/format": ".3f",
-						"pl7.app/table/visibility": "default"
-					}
-				}
-			},
-			{
-				column: "breadth", id: "breadth",
-				spec: {
-					name: "pl7.app/vdj/breadth", valueType: "Int",
-					annotations: {
-						"pl7.app/label": "Breadth",
-						"pl7.app/table/visibility": "default"
-					}
-				}
-			},
 			{
 				column: "dominantFeature", id: "dom",
 				spec: {
@@ -189,7 +135,10 @@ self.body(func(inputs) {
 		partitionKeyLength: 0
 	}, { splitDataAndSpec: true }))
 
-	// optional per-clonotype gene expression (clonotype x gene), aggregation method in the domain
+	// DORMANT (v1 categorical-only): optional per-clonotype gene expression (clonotype x gene) is a
+	// numerical property, deferred to the numerical-properties plan. Kept intact but inert — hasGex is
+	// always false while no UI exposes gexColumnId. Re-activating is a UI-only change (restore the GEX
+	// dropdown) plus re-adding saveFile("result_expression.csv") above.
 	if hasGex {
 		gexSpec := columns.getSpec(inputs.gexColumnId)
 		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId
@@ -216,7 +165,8 @@ self.body(func(inputs) {
 		}, { splitDataAndSpec: true }))
 	}
 
-	// optional per-clonotype dominant cell type
+	// per-clonotype categorical property: dominant cell type (dominant-category rule, spec A-0020),
+	// emitted when an annotation input is provided.
 	if hasAnnotation {
 		injectAll(xsv.importFile(run.getFile("result_annotation.csv"), "csv", {
 			axes: [{ column: "scClonotypeKey", spec: scAxis }],
