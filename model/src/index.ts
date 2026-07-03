@@ -1,4 +1,4 @@
-import type { InferOutputsType } from "@platforma-sdk/model";
+import type { InferOutputsType, RenderCtx, SUniversalPColumnId } from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
@@ -7,6 +7,28 @@ import {
   OutputColumnProvider,
 } from "@platforma-sdk/model";
 import type { BlockArgs, BlockData } from "./types";
+
+// Discover a per-cell column (by name) and offer it as a dropdown option whose value is the column's
+// GLOBAL id — the only form the workflow's bundleBuilder.addSingle resolves standalone (global-ref
+// branch → bquery.resolve, data included).
+//
+// Why getOptions and not the anchored discovery: the feature/annotation columns are per-cell
+// [sampleId, cellId, …], reachable from the clonotype anchor only across the cell linker. The anchored
+// discoveries (getCanonicalOptions / findColumnVariants "enrichment") DO reach the column but emit an
+// ANCHORED id, which the workflow routes to bquery.anchoredQuery — and anchoredQuery does not traverse
+// the linker, so the column comes back unresolved (spec+data undefined). getOptions returns the
+// column's resolvable global PlRef directly. Trade-off: it is not dataset-scoped (whole result pool),
+// which is fine while there is a single upstream producer per column type.
+function discoverLinkedOptions(
+  ctx: RenderCtx<BlockArgs, BlockData>,
+  columnName: string,
+): { label: string; value: SUniversalPColumnId }[] {
+  const opts = ctx.resultPool.getOptions([{ name: columnName }]);
+  return (opts ?? []).map((o) => ({
+    label: o.label,
+    value: JSON.stringify(o.ref) as SUniversalPColumnId,
+  }));
+}
 
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
@@ -49,32 +71,21 @@ export const platforma = BlockModelV3.create(dataModel)
       { refsWithEnrichments: true },
     ),
   )
-  // Feature Integration per-cell UMI-count column, discovered relative to the dataset anchor
+  // Feature Integration per-cell UMI-count column, discovered via the cell linker from the dataset
+  // anchor. Value is the global hit id (workflow-resolvable) — see discoverLinkedOptions.
   .output("featureOptions", (ctx) =>
-    ctx.data.datasetRef
-      ? ctx.resultPool.getCanonicalOptions({ main: ctx.data.datasetRef }, [
-          { name: "pl7.app/feature/umiCount" },
-        ])
-      : [],
+    ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/feature/umiCount") : [],
   )
   // DORMANT (v1 = categorical only): GEX drives the deferred numerical expression output; no UI
   // control currently sets gexColumnId. Kept so the numerical-properties plan restores the GEX
   // dropdown without re-adding this query.
   // Optional per-cell gene-expression count matrix
   .output("gexOptions", (ctx) =>
-    ctx.data.datasetRef
-      ? ctx.resultPool.getCanonicalOptions({ main: ctx.data.datasetRef }, [
-          { name: "pl7.app/rna-seq/countMatrix" },
-        ])
-      : [],
+    ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/rna-seq/countMatrix") : [],
   )
   // Optional per-cell cell-type annotation
   .output("annotationOptions", (ctx) =>
-    ctx.data.datasetRef
-      ? ctx.resultPool.getCanonicalOptions({ main: ctx.data.datasetRef }, [
-          { name: "pl7.app/rna-seq/cellType" },
-        ])
-      : [],
+    ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/rna-seq/cellType") : [],
   )
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback. The Python aggregation is a long-running (16 GiB) step.
