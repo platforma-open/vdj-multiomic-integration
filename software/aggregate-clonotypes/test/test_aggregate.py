@@ -9,13 +9,12 @@ Run from software/:
 import csv
 import math
 import pathlib
-import statistics
 import subprocess
 import sys
 
 import numpy as np
 import pytest
-from aggregate_clonotypes import aggregate_expression, breadth, dominant_category, restriction_index
+from aggregate_clonotypes import breadth, dominant_category, restriction_index
 from compartment_ref import restriction_index as ref_restriction_index
 from hypothesis import given
 from hypothesis import strategies as st
@@ -87,17 +86,6 @@ def test_dominant_none():
     assert dominant_category({"A": 0}, 0.6) is None
 
 
-# --- expression aggregation (spec A-0019) ---
-
-
-def test_expression_mean_default():
-    assert aggregate_expression([2.0, 4.0, 6.0]) == pytest.approx(4.0)
-
-
-def test_expression_max():
-    assert aggregate_expression([2.0, 4.0, 6.0], method="max") == 6.0
-
-
 # --- properties (invariants that hold for ALL valid inputs) ---
 
 
@@ -121,20 +109,6 @@ def test_breadth_monotonic_in_threshold(counts, t1, t2):
 def test_dominant_result_in_domain(counts, threshold):
     r = dominant_category(counts, threshold)
     assert r is None or r == "ambiguous" or r in counts
-
-
-# expression values are non-negative (counts / normalized expression); compare mean against the
-# accurate statistics.fmean oracle (robust to the float rounding that a raw min<=mean<=max check trips on).
-@given(
-    st.lists(
-        st.floats(min_value=0, max_value=1e6, allow_nan=False, allow_infinity=False, allow_subnormal=False),
-        min_size=1,
-        max_size=20,
-    )
-)
-def test_expression_mean_and_max(values):
-    assert aggregate_expression(values, "mean") == pytest.approx(statistics.fmean(values))
-    assert aggregate_expression(values, "max") == max(values)
 
 
 # --- parity vs the verbatim compartment_analysis.py reference (spec A-0013) ---
@@ -198,3 +172,72 @@ def test_cli_golden_properties(features_csv, linker_csv, tmp_path):
     assert rows["C1"]["dominantFeature"] == "AGX"
     assert float(rows["C2"]["restrictionIndex"]) == 1.0
     assert int(rows["C2"]["breadth"]) == 1
+
+
+def _write_csv(path, header, rows):
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(rows)
+
+
+def _run_cli(tmp_path, feature_rows, linker_rows):
+    feats = tmp_path / "features.csv"
+    linker = tmp_path / "linker.csv"
+    _write_csv(feats, ["sampleId", "cellId", "feature", "umiCount"], feature_rows)
+    _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            "--feature-csv",
+            str(feats),
+            "--linker-csv",
+            str(linker),
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,  # a mid-run crash surfaces as CalledProcessError -> test failure
+        cwd=tmp_path,
+    )
+
+
+@pytest.mark.slow
+def test_cli_disjoint_join_emits_empty_not_crash(tmp_path):
+    # Feature cells and linker cells share no (sampleId, cellId): the inner join is empty. The run must
+    # succeed and emit a header-only properties CSV (empty-but-valid) rather than crash on
+    # pl.DataFrame([]).sort(...) — the barcode-mismatch failure mode the block hit in real data.
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cellA", "AGX", 8), ("s1", "cellA", "BGX", 2)],
+        linker_rows=[("s1", "cellZ", "C1")],
+    )
+    props = tmp_path / "result_properties.csv"
+    assert props.exists()
+    with open(props, newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames
+        rows = list(reader)
+    assert rows == []  # header present, zero data rows
+    assert set(fieldnames) == {"scClonotypeKey", "restrictionIndex", "breadth", "dominantFeature"}
+
+
+@pytest.mark.slow
+def test_cli_all_zero_counts_are_dropped_no_nan(tmp_path):
+    # A clonotype whose only feature rows are all-zero UMI has no antigen signal: it must be dropped
+    # (sparse, DP-4), never emit a 0/0=NaN fraction or a null-dtype dominant column.
+    _run_cli(
+        tmp_path,
+        feature_rows=[
+            ("s1", "cellA", "AGX", 0),
+            ("s1", "cellA", "BGX", 0),
+            ("s1", "cellC", "AGX", 5),
+        ],
+        linker_rows=[("s1", "cellA", "C1"), ("s1", "cellC", "C2")],
+    )
+    with open(tmp_path / "result_fractions.csv", newline="") as f:
+        frac_rows = list(csv.DictReader(f))
+    assert all(r["fraction"] not in ("NaN", "nan", "") for r in frac_rows)
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        keys = {r["scClonotypeKey"] for r in csv.DictReader(f)}
+    assert keys == {"C2"}  # C1 (all-zero) dropped; C2 retained

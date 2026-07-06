@@ -63,23 +63,28 @@ def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
     return "ambiguous"
 
 
-def aggregate_expression(values: list[float], method: str = "mean") -> float:
-    """Per-gene aggregation across a clonotype's cells (spec A-0019)."""
-    if method == "max":
-        return max(values)
-    return sum(values) / len(values)
-
-
 def _clonotype_feature_counts(feature_csv: str, linker_csv: str) -> pl.DataFrame:
     """(sampleId, cellId, feature, umiCount) join linker -> (scClonotypeKey, feature, count) summed
-    across samples (spec A-0005). Inner join drops cells with no clonotype (DP-4)."""
+    across samples (spec A-0005). Inner join drops cells with no clonotype (DP-4); features whose
+    summed count is 0 in a clonotype are dropped too, keeping the matrix sparse per DP-4 and avoiding
+    a 0/0 within-clonotype fraction downstream."""
     feats = pl.read_csv(feature_csv)
     linker = pl.read_csv(linker_csv)  # sampleId, cellId, scClonotypeKey
     return (
         feats.join(linker, on=["sampleId", "cellId"], how="inner")
         .group_by(["scClonotypeKey", "feature"])
         .agg(pl.col("umiCount").sum().alias("count"))
+        .filter(pl.col("count") > 0)
     )
+
+
+def _write_sorted(rows: list[dict], schema: dict, out_path: str) -> None:
+    """Write per-clonotype rows to CSV sorted by scClonotypeKey. When rows is empty — e.g. the feature
+    or annotation cells share no (sampleId, cellId) with the linker, so the inner join is empty —
+    pl.DataFrame([]) has no columns and .sort() raises ColumnNotFoundError; fall back to a header-only
+    frame built from `schema` so the block emits an empty-but-valid result instead of crashing mid-run."""
+    df = pl.DataFrame(rows) if rows else pl.DataFrame(schema=schema)
+    df.sort(["scClonotypeKey"]).write_csv(out_path)
 
 
 def main() -> None:
@@ -124,7 +129,16 @@ def main() -> None:
                 "dominantFeature": dominant_category(per_feature, args.dominance_threshold),
             }
         )
-    pl.DataFrame(prop_rows).sort(["scClonotypeKey"]).write_csv(f"{args.output_prefix}_properties.csv")
+    _write_sorted(
+        prop_rows,
+        {
+            "scClonotypeKey": pl.String,
+            "restrictionIndex": pl.Float64,
+            "breadth": pl.Int64,
+            "dominantFeature": pl.String,
+        },
+        f"{args.output_prefix}_properties.csv",
+    )
 
     # optional GEX: mean/max per (clonotype, gene)
     if args.gex_csv is not None:
@@ -149,7 +163,11 @@ def main() -> None:
             ann_rows.append(
                 {"scClonotypeKey": clono, "dominantCellType": dominant_category(d, args.dominance_threshold)}
             )
-        pl.DataFrame(ann_rows).sort(["scClonotypeKey"]).write_csv(f"{args.output_prefix}_annotation.csv")
+        _write_sorted(
+            ann_rows,
+            {"scClonotypeKey": pl.String, "dominantCellType": pl.String},
+            f"{args.output_prefix}_annotation.csv",
+        )
 
 
 if __name__ == "__main__":
