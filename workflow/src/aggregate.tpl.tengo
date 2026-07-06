@@ -271,6 +271,20 @@ self.body(func(inputs) {
 		}, { splitDataAndSpec: true }))
 	}
 
+	// Readable clonotype identity, pulled from the VDJ dataset (import-vdj-data) via the bundle in
+	// main.tpl.tengo and joined here on the shared scClonotypeKey axis. The label column (pl7.app/label)
+	// relabels the opaque scClonotypeKey axis to "C-XXXXX"; the primary heavy/light CDR3 aa + V/J-gene
+	// columns arrive with import-vdj-data's own labels + table visibility, so their specs pass through
+	// verbatim (only trace is injected). All are keyed on scClonotypeKey alone — no extra axis — so they
+	// render in the flat per-clonotype table.
+	labelCol := columns.getColumn("clonotypeLabel")
+	fb.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
+
+	identityCols := columns.getColumns("cdr3aa") + columns.getColumns("vGene") + columns.getColumns("jGene")
+	for i, col in identityCols {
+		fb.add("clonoIdentity_" + string(i), trace.inject(col.spec), col.data)
+	}
+
 	finalPf := fb.build()
 
 	return {
