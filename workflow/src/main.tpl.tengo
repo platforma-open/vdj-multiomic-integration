@@ -13,9 +13,21 @@ aggregateTpl := assets.importTemplate(":aggregate")
 
 wf.body(func(args) {
 	bundleBuilder := wf.createPBundleBuilder()
+	bundleBuilder.ignoreMissingDomains() // robust matching of the VDJ dataset's per-clonotype property columns
 	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
 	bundleBuilder.addSingle(args.featureColumnId) // Feature Integration per-cell feature column (anchored id)
 	bundleBuilder.addSingle({ name: "pl7.app/sc/cellLinker" }, "linker") // cellLinker resolved by spec under the anchor
+
+	// Readable clonotype identity for the results table, resolved from the VDJ dataset (import-vdj-data)
+	// under the anchor's scClonotypeKey axis (idx 1). The label column (pl7.app/label -> "C-XXXXX")
+	// relabels the otherwise-opaque scClonotypeKey axis; the primary heavy/light CDR3 aa + V/J genes give
+	// the biological identity. All are keyed on scClonotypeKey alone, so they join the flat per-clonotype
+	// table. They are injected into the results frame in the aggregate template (keeps the table
+	// self-contained; no discovery / maxHops change in the model).
+	bundleBuilder.addSingle({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/label" }, "clonotypeLabel")
+	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/sequence", domain: { "pl7.app/vdj/feature": "CDR3", "pl7.app/alphabet": "aminoacid", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "cdr3aa")
+	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/geneHit", domain: { "pl7.app/vdj/reference": "VGene", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "vGene")
+	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/geneHit", domain: { "pl7.app/vdj/reference": "JGene", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "jGene")
 
 	if args.gexColumnId != undefined {
 		bundleBuilder.addSingle(args.gexColumnId)
