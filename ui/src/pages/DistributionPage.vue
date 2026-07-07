@@ -10,7 +10,7 @@ const app = useApp();
 // mono- vs poly-reactivity). Breadth is in the same frame, so the user can switch the binned value to
 // it from the GraphMaker controls.
 const defaultOptions = computed((): PredefinedGraphOption<"histogram">[] | null => {
-  const pCols = app.model.outputs.graphsPCols;
+  const pCols = app.model.outputs.distributionPCols;
   if (!pCols || pCols.length === 0) return null;
 
   const ri = pCols.find((p) => p.spec.name === "pl7.app/vdj/restrictionIndex");
@@ -24,7 +24,7 @@ const defaultOptions = computed((): PredefinedGraphOption<"histogram">[] | null 
   <GraphMaker
     v-model="app.model.data.distributionState"
     chart-type="histogram"
-    :p-frame="app.model.outputs.graphsPf"
+    :p-frame="app.model.outputs.distributionPf"
     :default-options="defaultOptions"
   />
 </template>

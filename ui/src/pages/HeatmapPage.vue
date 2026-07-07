@@ -9,7 +9,7 @@ const app = useApp();
 // Clonotype × antigen binding heatmap: y = clonotype, x = antigen, color = within-clonotype fraction.
 // The fraction column is keyed on [scClonotypeKey, featureId] (axesSpec[0], axesSpec[1]).
 const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | null => {
-  const pCols = app.model.outputs.graphsPCols;
+  const pCols = app.model.outputs.bindingPCols;
   if (!pCols || pCols.length === 0) return null;
 
   const fraction = pCols.find((p) => p.spec.name === "pl7.app/feature/clonotypeFraction");
@@ -27,7 +27,7 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | null =>
   <GraphMaker
     v-model="app.model.data.heatmapState"
     chart-type="heatmap"
-    :p-frame="app.model.outputs.graphsPf"
+    :p-frame="app.model.outputs.bindingPf"
     :default-options="defaultOptions"
   />
 </template>
