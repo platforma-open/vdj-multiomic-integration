@@ -65,6 +65,47 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
 const MATRIX_COLS = ["pl7.app/feature/clonotypeFraction", "pl7.app/feature/clonotypeUmiCount"];
 // Per-clonotype scalar columns ([scClonotypeKey]) — the reactivity histogram.
 const SCALAR_COLS = ["pl7.app/vdj/restrictionIndex", "pl7.app/vdj/breadth"];
+// The clonotype axis label column (pl7.app/label -> "C-XXXXX"). Included in the graph frames so
+// GraphMaker relabels the scClonotypeKey axis to the readable clone id instead of the raw content
+// hash. createPFrameForGraphs pulls label columns in automatically via getRelatedColumns, but it
+// enumerates the result pool and hangs on the upstream Samples & Data FASTQ dataset (see the frame
+// comment below), so we add the label column by hand from our own exportFrame'd table.
+const LABEL_COL = "pl7.app/label";
+
+// Shared resolver for the GraphMaker outputs below: the clonotypeTable PColumns filtered to a
+// name-set, or undefined while the frame is still computing (getPColumns() throws mid-compute, which
+// the catch maps to "not ready" — withStatus + GraphMaker render that as a loading state).
+function graphCols(ctx: RenderCtx<BlockArgs, BlockData>, names: string[]) {
+  try {
+    return ctx.outputs
+      ?.resolve("clonotypeTable")
+      ?.getPColumns()
+      ?.filter((c) => names.includes(c.spec.name));
+  } catch {
+    return undefined;
+  }
+}
+
+// The value columns plus the clonotype label (so GraphMaker relabels the scClonotypeKey axis),
+// assembled into a PFrame via ctx.createPFrame (own columns only — avoids the result-pool enumeration
+// that hangs on the upstream Samples & Data FASTQ dataset). undefined unless at least one value column
+// (not just the label) is present.
+function graphPFrame(
+  ctx: RenderCtx<BlockArgs, BlockData>,
+  names: string[],
+): PFrameHandle | undefined {
+  try {
+    const cols = ctx.outputs
+      ?.resolve("clonotypeTable")
+      ?.getPColumns()
+      ?.filter((c) => names.includes(c.spec.name) || c.spec.name === LABEL_COL);
+    // require at least one value column, not just the label
+    if (cols === undefined || !cols.some((c) => names.includes(c.spec.name))) return undefined;
+    return ctx.createPFrame(cols);
+  } catch {
+    return undefined;
+  }
+}
 
 export const platforma = BlockModelV3.create(dataModel)
   .args<BlockArgs>((data) => {
@@ -159,50 +200,10 @@ export const platforma = BlockModelV3.create(dataModel)
   // on the upstream Samples & Data FASTQ File-dataset (the same pool-enumeration trap clonotypeTable
   // avoids with maxHops:0). getPColumns() throws while the frame is still computing; the catch maps that
   // to "not ready" (undefined), which withStatus + GraphMaker render as a loading state.
-  .outputWithStatus("bindingPf", (ctx): PFrameHandle | undefined => {
-    try {
-      const cols = ctx.outputs
-        ?.resolve("clonotypeTable")
-        ?.getPColumns()
-        ?.filter((c) => MATRIX_COLS.includes(c.spec.name));
-      if (cols === undefined || cols.length === 0) return undefined;
-      return ctx.createPFrame(cols);
-    } catch {
-      return undefined;
-    }
-  })
-  .output("bindingPCols", (ctx) => {
-    try {
-      return ctx.outputs
-        ?.resolve("clonotypeTable")
-        ?.getPColumns()
-        ?.filter((c) => MATRIX_COLS.includes(c.spec.name));
-    } catch {
-      return undefined;
-    }
-  })
-  .outputWithStatus("distributionPf", (ctx): PFrameHandle | undefined => {
-    try {
-      const cols = ctx.outputs
-        ?.resolve("clonotypeTable")
-        ?.getPColumns()
-        ?.filter((c) => SCALAR_COLS.includes(c.spec.name));
-      if (cols === undefined || cols.length === 0) return undefined;
-      return ctx.createPFrame(cols);
-    } catch {
-      return undefined;
-    }
-  })
-  .output("distributionPCols", (ctx) => {
-    try {
-      return ctx.outputs
-        ?.resolve("clonotypeTable")
-        ?.getPColumns()
-        ?.filter((c) => SCALAR_COLS.includes(c.spec.name));
-    } catch {
-      return undefined;
-    }
-  })
+  .outputWithStatus("bindingPf", (ctx) => graphPFrame(ctx, MATRIX_COLS))
+  .output("bindingPCols", (ctx) => graphCols(ctx, MATRIX_COLS))
+  .outputWithStatus("distributionPf", (ctx) => graphPFrame(ctx, SCALAR_COLS))
+  .output("distributionPCols", (ctx) => graphCols(ctx, SCALAR_COLS))
   .title(() => "VDJ Multiomic Integration")
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Table" },
