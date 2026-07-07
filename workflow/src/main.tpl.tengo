@@ -83,6 +83,8 @@ wf.body(func(args) {
 		gexColumnId: args.gexColumnId,
 		blockId: blockId,
 		expressionMethod: args.expressionMethod,
+		customBlockLabel: args.customBlockLabel,
+		defaultBlockLabel: args.defaultBlockLabel,
 		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})

@@ -85,7 +85,10 @@ const tableSettings = usePlDataTableSettingsV2({
 </script>
 
 <template>
-  <PlBlockPage>
+  <PlBlockPage
+    v-model:subtitle="app.model.data.customBlockLabel"
+    :subtitle-placeholder="app.model.data.defaultBlockLabel"
+  >
     <template #title>VDJ Multiomic Integration</template>
     <template #append>
       <PlBtnGhost @click.stop="settingsOpen = true">

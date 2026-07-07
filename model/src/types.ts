@@ -26,6 +26,11 @@ export type BlockArgs = {
   dominanceThreshold: number; // spec A-0012, default 0.6, floor 0.5
   presenceThresholds: Record<string, number>; // per-antigen presence cutoffs (feature name -> fraction); default-valued entries omitted
   expressionMethod: "mean" | "max"; // spec A-0019, default mean
+  // Block label -> the pl7.app/trace step label on every emitted column, so downstream (Lead Selection)
+  // can tell which VDJM instance a column came from. customBlockLabel is the user's override; defaultBlockLabel
+  // is the input-derived fallback (the selected dataset's label).
+  customBlockLabel: string;
+  defaultBlockLabel: string;
 };
 
 /** Unified persisted UI + grid state (designed on the UI's terms). */
@@ -39,6 +44,10 @@ export type BlockData = {
   // feeds args (re-run); `hidden` is plots-only (UI). Keyed by name so a toggle survives antigen-set churn.
   antigenSettings: Record<string, AntigenSetting>;
   expressionMethod: "mean" | "max";
+  // Editable block label (the subtitle) + its input-derived default; both feed the trace label (args).
+  // defaultBlockLabel is synced from the selected dataset's label by the UI (a tolerated block-label hairpin).
+  customBlockLabel: string;
+  defaultBlockLabel: string;
   tableState: PlDataTableStateV2; // PlAgDataTableV2 grid state (UI-only, never projected to args)
   // GraphMaker view state, one per plot page (UI-only, never projected to args).
   heatmapState: GraphMakerState; // clonotype × antigen property heatmap
