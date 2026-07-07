@@ -1,7 +1,12 @@
 // Per-clonotype aggregation (ephemeral). Awaits the PColumnBundle (specs first, data when ready),
-// materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and then
-// hands the run's output files to the `finalize` child template, which awaits the feature-names value
-// and builds the per-clonotype p-columns (see finalize.tpl.tengo for why the split is required).
+// materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and returns
+// the run's output files. The `finalize` template (rendered by main.tpl.tengo alongside this one) then
+// awaits the feature-names value + the bundle and builds the per-clonotype p-columns — see
+// finalize.tpl.tengo for why the split is required.
+//
+// This template must NOT render finalize itself: it holds the bundle in its *resolved* form (a strict
+// map with methods, from awaitState), which cannot be serialized as a template input. main.tpl passes
+// the *unresolved* bundle reference to finalize instead.
 //
 // SCOPE here: resolve the bundle, guard the single-grouping requirement (VDJM-14), build the input
 // CSVs, and run the Python. All column-spec construction (dominant antigen + discreteValues, the
@@ -10,13 +15,11 @@
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-render := import("@platforma-sdk/workflow-tengo:render")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 json := import("json")
 
 aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
-finalizeTpl := assets.importTemplate(":finalize")
 
 self.awaitState("columns", "PColumnBundle")
 
@@ -120,29 +123,16 @@ self.body(func(inputs) {
 	}
 	run = run.run()
 
-	// Hand the run's output files + the feature-names content + the bundle to finalize, which awaits the
-	// feature-names value and builds every emitted column. Ephemeral, mirroring this template (safe
-	// cross-project dedup is deferred to v1.1 — see decisions/2026-07-07.md).
-	result := render.createEphemeral(finalizeTpl, {
-		columns: columns,
+	// Return the run's output files (resources). main.tpl.tengo forwards these to finalize together with
+	// the unresolved bundle. featureNames is content (read as a value in finalize); the rest are files
+	// consumed by xsv.importFile there.
+	return {
 		featureNames: run.getFileContent("result_feature_names.json"),
 		propertiesFile: run.getFile("result_properties.csv"),
 		fractionsLongFile: run.getFile("result_fractions.csv"),
 		fractionsWideFile: run.getFile("result_fractions_wide.csv"),
 		countsFile: run.getFile("result_counts.csv"),
 		expressionFile: hasGex ? run.getFile("result_expression.csv") : undefined,
-		annotationFile: hasAnnotation ? run.getFile("result_annotation.csv") : undefined,
-		featureColumnId: inputs.featureColumnId,
-		gexColumnId: inputs.gexColumnId,
-		blockId: inputs.blockId,
-		expressionMethod: inputs.expressionMethod,
-		hasGex: hasGex,
-		hasAnnotation: hasAnnotation
-	})
-
-	return {
-		clonotypeTable: result.output("clonotypeTable"),
-		propertiesPf: result.output("propertiesPf"),
-		clonotypeProperties: result.output("clonotypeProperties")
+		annotationFile: hasAnnotation ? run.getFile("result_annotation.csv") : undefined
 	}
 })
