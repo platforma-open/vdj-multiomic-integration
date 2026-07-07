@@ -10,7 +10,7 @@ const app = useApp();
 // Two encodings (magnitude + normalized share) make a focused shortlist more scannable than the flat
 // heatmap. Both matrix columns are keyed on [scClonotypeKey, featureId] (axesSpec[0], axesSpec[1]).
 const defaultOptions = computed((): PredefinedGraphOption<"bubble">[] | null => {
-  const pCols = app.model.outputs.graphsPCols;
+  const pCols = app.model.outputs.bindingPCols;
   if (!pCols || pCols.length === 0) return null;
 
   const umi = pCols.find((p) => p.spec.name === "pl7.app/feature/clonotypeUmiCount");
@@ -30,7 +30,7 @@ const defaultOptions = computed((): PredefinedGraphOption<"bubble">[] | null => 
   <GraphMaker
     v-model="app.model.data.bindingBubbleState"
     chart-type="bubble"
-    :p-frame="app.model.outputs.graphsPf"
+    :p-frame="app.model.outputs.bindingPf"
     :default-options="defaultOptions"
   />
 </template>

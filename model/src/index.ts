@@ -6,7 +6,6 @@ import type {
 } from "@platforma-sdk/model";
 import {
   BlockModelV3,
-  createPFrameForGraphs,
   createPlDataTableStateV2,
   createPlDataTableV3,
   DataModelBuilder,
@@ -59,6 +58,11 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
     currentTab: null,
   },
 }));
+
+// Clonotype × antigen matrix columns ([scClonotypeKey, featureId]) — the binding heatmap + bubble.
+const MATRIX_COLS = ["pl7.app/feature/clonotypeFraction", "pl7.app/feature/clonotypeUmiCount"];
+// Per-clonotype scalar columns ([scClonotypeKey]) — the reactivity histogram.
+const SCALAR_COLS = ["pl7.app/vdj/restrictionIndex", "pl7.app/vdj/breadth"];
 
 export const platforma = BlockModelV3.create(dataModel)
   .args<BlockArgs>((data) => {
@@ -141,23 +145,58 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // One PFrame for all plot pages (heatmap / binding bubble / reactivity distribution). Each page's
-  // defaultOptions picks the columns it needs, mirroring titeseq's single summary PFrame feeding
-  // multiple charts. getPColumns() throws while the frame is still computing — the catch maps that to
-  // "not ready" (undefined), which withStatus + GraphMaker render as a loading state.
-  .outputWithStatus("graphsPf", (ctx): PFrameHandle | undefined => {
+  // Graph frames, split by axis structure. A GraphMaker chart tabulates its whole PFrame into one
+  // PTable, so a frame must be axis-homogeneous: the [scClonotypeKey, featureId] matrix feeds the
+  // heatmap + bubble; the [scClonotypeKey] scalars feed the reactivity histogram. Mixing axes (or the
+  // [scClonotypeKey, geneId] expression column) in one frame has no valid join.
+  //
+  // Source columns from the exportFrame'd `clonotypeTable` output, NOT the raw `propertiesPf`: only the
+  // exportFrame'd frame materializes the column blobs, so ctx.createPFrame can read their blob info.
+  // Building from raw `propertiesPf` throws "Key not found ctl/file/blobInfo" (verified). ctx.createPFrame
+  // (own columns only) also avoids createPFrameForGraphs's result-pool enumeration, which blocks forever
+  // on the upstream Samples & Data FASTQ File-dataset (the same pool-enumeration trap clonotypeTable
+  // avoids with maxHops:0). getPColumns() throws while the frame is still computing; the catch maps that
+  // to "not ready" (undefined), which withStatus + GraphMaker render as a loading state.
+  .outputWithStatus("bindingPf", (ctx): PFrameHandle | undefined => {
     try {
-      const pCols = ctx.outputs?.resolve("propertiesPf")?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPFrameForGraphs(ctx, pCols);
+      const cols = ctx.outputs
+        ?.resolve("clonotypeTable")
+        ?.getPColumns()
+        ?.filter((c) => MATRIX_COLS.includes(c.spec.name));
+      if (cols === undefined || cols.length === 0) return undefined;
+      return ctx.createPFrame(cols);
     } catch {
       return undefined;
     }
   })
-  // Raw columns for the pages' defaultOptions (axis/value binding). Same source as graphsPf.
-  .output("graphsPCols", (ctx) => {
+  .output("bindingPCols", (ctx) => {
     try {
-      return ctx.outputs?.resolve("propertiesPf")?.getPColumns();
+      return ctx.outputs
+        ?.resolve("clonotypeTable")
+        ?.getPColumns()
+        ?.filter((c) => MATRIX_COLS.includes(c.spec.name));
+    } catch {
+      return undefined;
+    }
+  })
+  .outputWithStatus("distributionPf", (ctx): PFrameHandle | undefined => {
+    try {
+      const cols = ctx.outputs
+        ?.resolve("clonotypeTable")
+        ?.getPColumns()
+        ?.filter((c) => SCALAR_COLS.includes(c.spec.name));
+      if (cols === undefined || cols.length === 0) return undefined;
+      return ctx.createPFrame(cols);
+    } catch {
+      return undefined;
+    }
+  })
+  .output("distributionPCols", (ctx) => {
+    try {
+      return ctx.outputs
+        ?.resolve("clonotypeTable")
+        ?.getPColumns()
+        ?.filter((c) => SCALAR_COLS.includes(c.spec.name));
     } catch {
       return undefined;
     }
