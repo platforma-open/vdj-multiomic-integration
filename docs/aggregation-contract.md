@@ -3,9 +3,8 @@
 Design note for the per-clonotype aggregation (plan Task 0). Resolves the join/group contract and
 the two open decision points (DP-4, DP-5) before the workflow (Tasks 3-4) is written.
 
-> **Operator sign-off: PENDING.** The resolutions below are the recommended conservative defaults.
-> They are already reflected in the Python software (Task 2) and will be used by the workflow unless
-> the operator overrides them.
+> **Operator sign-off: DP-5 resolved ON (2026-07-06).** RI + breadth now carry `pl7.app/isScore`
+> (see DP-5). DP-4 remains the working default below (to be confirmed in the spec-evolve pass).
 
 ## Join / group contract (verified)
 
@@ -39,16 +38,16 @@ The block joins the per-cell columns to the VDJ dataset's **cell linker** and gr
 
 Spec A-0022 defers the formal treatment; this note records the working resolution.
 
-## DP-5 — `pl7.app/isScore` on `restrictionIndex`
+## DP-5 — `pl7.app/isScore` on `restrictionIndex` and `breadth`
 
-**Decision: OFF by default.** `pl7.app/vdj/restrictionIndex` is emitted with label "Restriction index"
-and `pl7.app/format: ".3f"`, but **without** `pl7.app/isScore: "true"`.
+**Decision: ON (operator, 2026-07-06).** `pl7.app/vdj/restrictionIndex` and `pl7.app/vdj/breadth` are
+emitted with `pl7.app/isScore: "true"` and `pl7.app/score/rankingOrder: "decreasing"`, and **no**
+`pl7.app/score/defaultCutoff` (conservative — rankable, but no auto-filter imposed).
 
-Rationale: clonotype-distribution sets `isScore` on its analogous column
-(`process.tpl.tengo:228-243`), but there is no published validation that the restriction index is a
-meaningful cross-clonotype score here. Per the spec STATUS backlog this is an operator call; default
-off avoids over-claiming. Flip to on with a one-line annotation change if the operator decides it
-should rank.
+Rationale: RI is the monospecificity signal that downstream lead-selection exists to rank on, matching
+clonotype-distribution which marks its analogous column as a score (`process.tpl.tengo:228-243`). The
+default cutoff is deliberately omitted because there is no published validation of a cutoff value here,
+so the score is offered for ranking without imposing a filter.
 
 ## Consequences for the workflow (Tasks 3-4)
 

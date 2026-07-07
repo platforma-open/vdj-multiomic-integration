@@ -131,9 +131,9 @@ self.body(func(inputs) {
 	}
 
 	// per-clonotype properties from result_properties.csv: dominant antigen (categorical, A-0012),
-	// restriction index + breadth (numerical, A-0011 v1.1 / A-0015). RI/breadth are emitted WITHOUT
-	// pl7.app/isScore per the aggregation-contract DP-5 (conservative default — flip to "true" here to
-	// let downstream lead-selection rank on them).
+	// restriction index + breadth (numerical, A-0011 v1.1 / A-0015). RI/breadth carry pl7.app/isScore
+	// (rankingOrder decreasing, no default cutoff) per aggregation-contract DP-5 (signed off ON
+	// 2026-07-06) so downstream lead-selection can rank clonotypes on them.
 	importAndInject("result_properties.csv", [{ column: "scClonotypeKey", spec: scAxis }], [
 		{
 			column: "dominantFeature", id: "dom",
@@ -153,7 +153,9 @@ self.body(func(inputs) {
 				annotations: {
 					"pl7.app/label": "Restriction index",
 					"pl7.app/format": ".3f",
-					"pl7.app/table/visibility": "default"
+					"pl7.app/table/visibility": "default",
+					"pl7.app/isScore": "true",
+					"pl7.app/score/rankingOrder": "decreasing"
 				}
 			}
 		},
@@ -163,7 +165,9 @@ self.body(func(inputs) {
 				name: "pl7.app/vdj/breadth", valueType: "Int",
 				annotations: {
 					"pl7.app/label": "Breadth",
-					"pl7.app/table/visibility": "optional"
+					"pl7.app/table/visibility": "optional",
+					"pl7.app/isScore": "true",
+					"pl7.app/score/rankingOrder": "decreasing"
 				}
 			}
 		}
