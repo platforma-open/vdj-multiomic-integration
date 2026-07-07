@@ -108,6 +108,7 @@ self.body(func(inputs) {
 
 	trace := pSpec.makeTrace(featureSpec, {
 		type: "milaboratories.vdj-multiomic-integration",
+		id: inputs.blockId,
 		importance: 30,
 		label: "VDJ Multiomic Integration"
 	})
@@ -128,20 +129,18 @@ self.body(func(inputs) {
 		fbDisplay.add(k, spec, data)
 		fbExport.add(k, spec, data)
 	}
-	injectAll := func(rawPf) {
-		for k, v in rawPf {
-			addOwn(k, trace.inject(v.spec), v.data)
-		}
-	}
-	// import a result CSV and inject its columns into the frame. Every result is a per-clonotype
+	// import a result CSV and inject its columns into both frames. Every result is a per-clonotype
 	// Parquet frame with the axes encoded in rows (no partition key), split so trace can be injected.
 	importAndInject := func(fileName, importAxes, importColumns) {
-		injectAll(xsv.importFile(run.getFile(fileName), "csv", {
+		rawPf := xsv.importFile(run.getFile(fileName), "csv", {
 			axes: importAxes,
 			columns: importColumns,
 			storageFormat: "Parquet",
 			partitionKeyLength: 0
-		}, { splitDataAndSpec: true }))
+		}, { splitDataAndSpec: true })
+		for k, v in rawPf {
+			addOwn(k, trace.inject(v.spec), v.data)
+		}
 	}
 
 	// per-clonotype properties from result_properties.csv: dominant antigen (categorical, A-0012),

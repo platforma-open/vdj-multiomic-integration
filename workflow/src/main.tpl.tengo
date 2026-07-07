@@ -38,8 +38,13 @@ wf.body(func(args) {
 
 	columns := bundleBuilder.build()
 
+	// this block's instance id — stamped as the id of VDJM's own trace step (provenance) so each VDJM
+	// instance's lineage is distinguishable; see makeTrace in aggregate.tpl.tengo.
+	blockId := wf.blockId().getDataAsJson()
+
 	result := render.createEphemeral(aggregateTpl, {
 		columns: columns,
+		blockId: blockId,
 		featureColumnId: args.featureColumnId,
 		gexColumnId: args.gexColumnId,
 		annotationColumnId: args.annotationColumnId,
