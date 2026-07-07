@@ -38,11 +38,15 @@ self.body(func(inputs) {
 	scAxis := linkerCol.spec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
 	featureAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
 
+	// Trace label = this instance's block label (user override, else the input-derived default), so two
+	// VDJM blocks stamp distinct labels and downstream Lead Selection can tell their columns apart. Falls
+	// back to the static block name for automated runs before the UI populates the default.
+	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "VDJ Multiomic Integration"
 	trace := pSpec.makeTrace(featureSpec, {
 		type: "milaboratories.vdj-multiomic-integration",
 		id: inputs.blockId,
 		importance: 30,
-		label: "VDJ Multiomic Integration"
+		label: traceLabel
 	})
 
 	// Two frames (VDJM-24): displayPf = own columns + borrowed VDJ identity (feeds the in-block table +

@@ -41,6 +41,8 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   dominanceThreshold: 0.6,
   antigenSettings: {},
   expressionMethod: "mean" as const,
+  customBlockLabel: "",
+  defaultBlockLabel: "",
   tableState: createPlDataTableStateV2(),
   // Property heatmap defaults to the clustered template with column mean-normalization — the view the
   // BEAM6 reference project settled on (feedback: "defaults set to what is currently set in BEAM6").
@@ -138,6 +140,10 @@ export const platforma = BlockModelV3.create(dataModel)
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
       presenceThresholds,
       expressionMethod: data.expressionMethod ?? "mean",
+      // Block label -> workflow trace label (finalize). Changing it re-runs so the new label is baked
+      // into the exported columns' provenance.
+      customBlockLabel: data.customBlockLabel ?? "",
+      defaultBlockLabel: data.defaultBlockLabel ?? "",
     };
   })
   // VDJ single-cell dataset anchor: columns keyed on [sampleId, scClonotypeKey] flagged as anchors
@@ -230,14 +236,10 @@ export const platforma = BlockModelV3.create(dataModel)
   .outputWithStatus("distributionPf", (ctx) => graphPFrame(ctx, SCALAR_COLS))
   .output("distributionPCols", (ctx) => graphCols(ctx, SCALAR_COLS))
   .title(() => "VDJ Multiomic Integration")
-  // Subtitle reflects what this instance integrates onto clonotypes: antigen binding is always present;
-  // gene expression and cell type appear when those optional inputs are wired up.
-  .subtitle((ctx) => {
-    const parts = ["Antigen binding"];
-    if (ctx.data.gexColumnId) parts.push("gene expression");
-    if (ctx.data.annotationColumnId) parts.push("cell type");
-    return parts.join(" · ");
-  })
+  // Subtitle = the block label: the user's override, else the input-derived default (the selected
+  // dataset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
+  // VDJM instances are distinguishable both here and in downstream Lead Selection column labels.
+  .subtitle((ctx) => ctx.data.customBlockLabel || ctx.data.defaultBlockLabel)
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/heatmap" as const, label: "Property Heatmap" },
