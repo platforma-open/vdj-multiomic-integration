@@ -46,6 +46,13 @@ wf.body(func(args) {
 	// instance's lineage is distinguishable; see makeTrace in aggregate.tpl.tengo.
 	blockId := wf.blockId().getDataAsJson()
 
+	// Ephemeral, not pure. The aggregation is deterministic (the Python sorts every output), so a pure
+	// template would additionally dedup this 16 GiB step across projects. That is deferred to v1.1: safe
+	// cross-project dedup needs the exported columns content-addressed via pl7.app/contentTag (so identical
+	// instances share a result and different configs stay distinct), which requires exec-output resource
+	// work that must be verified against the SDK rather than assumed — see decisions/2026-07-07.md. Until
+	// then ephemeral is the conservative choice; a subtly non-canonical pure template would ship silent
+	// wrong cache hits. Trade-off accepted for v1: the aggregation re-runs per project.
 	result := render.createEphemeral(aggregateTpl, {
 		columns: columns,
 		blockId: blockId,
