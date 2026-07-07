@@ -52,7 +52,10 @@ wf.body(func(args) {
 
 	return {
 		outputs: {
-			clonotypeTable: result.output("clonotypeTable")
+			clonotypeTable: result.output("clonotypeTable"),
+			// raw per-clonotype PFrame, surfaced to the model so it can build the GraphMaker frames
+			// (heatmap / binding bubble / reactivity distribution). Same resource as the export below.
+			propertiesPf: result.output("clonotypeProperties")
 		},
 		exports: {
 			clonotypeProperties: result.output("clonotypeProperties")
