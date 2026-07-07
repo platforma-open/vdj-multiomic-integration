@@ -6,17 +6,19 @@ import { useApp } from "../app";
 
 const app = useApp();
 
-// Repertoire-level reactivity distribution: histogram of the per-clonotype restriction index (0..1,
-// mono- vs poly-reactivity). Breadth is in the same frame, so the user can switch the binned value to
-// it from the GraphMaker controls.
+// Per-clonotype distribution histogram. Defaults the binned value to breadth (the number of antigens a
+// clonotype binds); the restriction index is in the same frame, so the user can switch to it from the
+// GraphMaker controls.
 const defaultOptions = computed((): PredefinedGraphOption<"histogram">[] | null => {
   const pCols = app.model.outputs.distributionPCols;
   if (!pCols || pCols.length === 0) return null;
 
-  const ri = pCols.find((p) => p.spec.name === "pl7.app/vdj/restrictionIndex");
-  if (!ri) return null;
+  const breadth = pCols.find((p) => p.spec.name === "pl7.app/vdj/breadth");
+  const restrictionIndex = pCols.find((p) => p.spec.name === "pl7.app/vdj/restrictionIndex");
+  const metric = breadth ?? restrictionIndex;
+  if (!metric) return null;
 
-  return [{ inputName: "value", selectedSource: ri.spec }];
+  return [{ inputName: "value", selectedSource: metric.spec }];
 });
 </script>
 

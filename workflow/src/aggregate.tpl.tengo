@@ -1,24 +1,22 @@
 // Per-clonotype aggregation (ephemeral). Awaits the PColumnBundle (specs first, data when ready),
-// materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and
-// imports the per-clonotype columns reusing the scClonotypeKey axis verbatim so they join the
-// existing clonotype table. No sample axis (spec A-0005).
+// materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and then
+// hands the run's output files to the `finalize` child template, which awaits the feature-names value
+// and builds the per-clonotype p-columns (see finalize.tpl.tengo for why the split is required).
 //
-// SCOPE: categorical properties + the numerical antigen-binding profile + optional per-gene
-// expression. Emits the dominant-category-rule columns (dominantFeature; dominantCellType when an
-// annotation is provided), the numerical properties (A-0011 v1.1 / A-0015: restrictionIndex, breadth,
-// per-feature fraction columns, advanced feature UMI count matrix), and — when a GEX column is
-// selected — per-gene mean/max expression per clonotype (A-0019). Not a VDJM output: any
-// per-clonotype specificity score (A-0014 is per-cell in Feature Integration).
+// SCOPE here: resolve the bundle, guard the single-grouping requirement (VDJM-14), build the input
+// CSVs, and run the Python. All column-spec construction (dominant antigen + discreteValues, the
+// per-antigen fraction columns, RI/breadth, the matrices, optional GEX/annotation, borrowed identity)
+// lives in finalize.tpl.tengo.
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+render := import("@platforma-sdk/workflow-tengo:render")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
-pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
-canonical := import("@platforma-sdk/workflow-tengo:canonical") // deterministic key-sorted JSON, for content-stable column keys
 ll := import("@platforma-sdk/workflow-tengo:ll")
+json := import("json")
 
 aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
+finalizeTpl := assets.importTemplate(":finalize")
 
 self.awaitState("columns", "PColumnBundle")
 
@@ -26,8 +24,6 @@ self.body(func(inputs) {
 	columns := inputs.columns
 	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
-
-	featureSpec := columns.getSpec(inputs.featureColumnId)
 
 	// Cell-linker resolution + grouping guard (VDJM-14). The linker is resolved as a MULTI query in
 	// main.tpl.tengo; v1 aggregates over a single clonotype grouping, so require exactly one linker.
@@ -41,7 +37,6 @@ self.body(func(inputs) {
 		ll.panic("VDJ Multiomic Integration v1 supports a single clonotype grouping, but the selected VDJ dataset has %d cell linkers. Importing V(D)J data with multiple chain sets produces one grouping per set — re-import V(D)J Data with a single chain set (e.g. IGHeavy + IGLight), or run one grouping at a time.", len(linkerCols))
 	}
 	linkerCol := linkerCols[0]
-	linkerSpec := linkerCol.spec
 
 	// A per-cell column -> flat CSV: value column under `valueHeader`, each axis renamed by position
 	// to the header the Python expects. Same mem/cpu budget for every cell CSV.
@@ -63,8 +58,7 @@ self.body(func(inputs) {
 	// Strip the isLinkerColumn marker before export: as a linker, csvFileBuilder/ptabler build a
 	// linker_index that requires exactly 2 connected components and reject this 3-axis cell linker
 	// [sampleId, cellId, scClonotypeKey]. We only need the axis tuple as flat rows, so export it as a
-	// plain column (same Parquet data, just not flagged as a linker). linkerCol comes from the
-	// grouping guard above (the single resolved cell linker).
+	// plain column (same Parquet data, just not flagged as a linker).
 	linkerAnnotations := {}
 	for k, v in linkerCol.spec.annotations {
 		if k != "pl7.app/isLinkerColumn" {
@@ -87,8 +81,14 @@ self.body(func(inputs) {
 		arg("--feature-csv").arg("features.csv").
 		arg("--linker-csv").arg("linker.csv").
 		arg("--dominance-threshold").arg(string(inputs.dominanceThreshold)).
-		arg("--presence-threshold").arg(string(inputs.presenceThreshold)).
 		arg("--output-prefix").arg("result")
+
+	// per-antigen presence cutoffs (feedback: per-antigen presence/binding threshold). Inline JSON map
+	// {antigen: threshold}; antigens not listed fall back to the Python's 0.0 default. Omitted entirely
+	// when empty so the run is identical to the all-default case.
+	if inputs.presenceThresholds != undefined && len(inputs.presenceThresholds) > 0 {
+		run = run.arg("--presence-thresholds").arg(string(json.encode(inputs.presenceThresholds)))
+	}
 
 	if hasGex {
 		gexCsvFile := buildCellCsv(columns.getColumn(inputs.gexColumnId), "count", ["sampleId", "cellId", "geneId"])
@@ -103,12 +103,15 @@ self.body(func(inputs) {
 			arg("--annotation-csv").arg("annotation.csv")
 	}
 
-	// Retrieve the properties CSV (dominantFeature + restrictionIndex + breadth) and the per-feature
-	// fraction + UMI count matrices, and (when a GEX column is selected) the expression CSV.
+	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
+	// wide) + UMI count matrices, the feature-names list (as content, read in finalize), and — when
+	// selected — the GEX / annotation CSVs.
 	run = run.
 		saveFile("result_properties.csv").
 		saveFile("result_fractions.csv").
-		saveFile("result_counts.csv")
+		saveFile("result_fractions_wide.csv").
+		saveFile("result_counts.csv").
+		saveFileContent("result_feature_names.json")
 	if hasGex {
 		run = run.saveFile("result_expression.csv")
 	}
@@ -117,198 +120,29 @@ self.body(func(inputs) {
 	}
 	run = run.run()
 
-	// axis reused verbatim from the input columns -> outputs join the existing clonotype table
-	scAxis := linkerSpec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
-
-	trace := pSpec.makeTrace(featureSpec, {
-		type: "milaboratories.vdj-multiomic-integration",
-		id: inputs.blockId,
-		importance: 30,
-		label: "VDJ Multiomic Integration"
+	// Hand the run's output files + the feature-names content + the bundle to finalize, which awaits the
+	// feature-names value and builds every emitted column. Ephemeral, mirroring this template (safe
+	// cross-project dedup is deferred to v1.1 — see decisions/2026-07-07.md).
+	result := render.createEphemeral(finalizeTpl, {
+		columns: columns,
+		featureNames: run.getFileContent("result_feature_names.json"),
+		propertiesFile: run.getFile("result_properties.csv"),
+		fractionsLongFile: run.getFile("result_fractions.csv"),
+		fractionsWideFile: run.getFile("result_fractions_wide.csv"),
+		countsFile: run.getFile("result_counts.csv"),
+		expressionFile: hasGex ? run.getFile("result_expression.csv") : undefined,
+		annotationFile: hasAnnotation ? run.getFile("result_annotation.csv") : undefined,
+		featureColumnId: inputs.featureColumnId,
+		gexColumnId: inputs.gexColumnId,
+		blockId: inputs.blockId,
+		expressionMethod: inputs.expressionMethod,
+		hasGex: hasGex,
+		hasAnnotation: hasAnnotation
 	})
 
-	// Two frames from the same per-clonotype results:
-	//  - displayPf: VDJM's own columns + the borrowed VDJ identity columns (label, CDR3, V/J). Feeds the
-	//    in-block table (self-contained exportFrame) and the GraphMaker plot frame. Not published to the
-	//    result pool, so the borrowed identity columns cause no cross-block collision here.
-	//  - exportPf: VDJM's own columns ONLY. This is what we publish (exports.clonotypeProperties) for
-	//    downstream blocks (e.g. lead selection) to anchor. It must NOT re-export the borrowed identity
-	//    columns: those already live in the pool under the same scClonotypeKey axis (from import-vdj-data),
-	//    so a re-export makes headers like 'cdr3Sequence.Heavy' non-unique when a downstream block anchors
-	//    this clonotype dataset (VDJM-24).
-	fbDisplay := pframes.pFrameBuilder()
-	fbExport := pframes.pFrameBuilder()
-	// VDJM's own computed columns belong in BOTH frames.
-	addOwn := func(k, spec, data) {
-		fbDisplay.add(k, spec, data)
-		fbExport.add(k, spec, data)
-	}
-	// import a result CSV and inject its columns into both frames. Every result is a per-clonotype
-	// Parquet frame with the axes encoded in rows (no partition key), split so trace can be injected.
-	importAndInject := func(fileName, importAxes, importColumns) {
-		rawPf := xsv.importFile(run.getFile(fileName), "csv", {
-			axes: importAxes,
-			columns: importColumns,
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		}, { splitDataAndSpec: true })
-		for k, v in rawPf {
-			addOwn(k, trace.inject(v.spec), v.data)
-		}
-	}
-
-	// per-clonotype properties from result_properties.csv: dominant antigen (categorical, A-0012),
-	// restriction index + breadth (numerical, A-0011 v1.1 / A-0015). RI/breadth carry pl7.app/isScore
-	// (rankingOrder decreasing, no default cutoff) per aggregation-contract DP-5 (signed off ON
-	// 2026-07-06) so downstream lead-selection can rank clonotypes on them.
-	importAndInject("result_properties.csv", [{ column: "scClonotypeKey", spec: scAxis }], [
-		{
-			column: "dominantFeature", id: "dom",
-			spec: {
-				name: "pl7.app/feature/dominantFeature", valueType: "String",
-				annotations: {
-					"pl7.app/label": "Dominant antigen",
-					"pl7.app/isDiscreteFilter": "true",
-					"pl7.app/table/visibility": "default"
-				}
-			}
-		},
-		{
-			column: "restrictionIndex", id: "ri",
-			spec: {
-				name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
-				annotations: {
-					"pl7.app/label": "Restriction index",
-					"pl7.app/format": ".3f",
-					"pl7.app/table/visibility": "default",
-					"pl7.app/isScore": "true",
-					"pl7.app/score/rankingOrder": "decreasing"
-				}
-			}
-		},
-		{
-			column: "breadth", id: "breadth",
-			spec: {
-				name: "pl7.app/vdj/breadth", valueType: "Int",
-				annotations: {
-					"pl7.app/label": "Breadth",
-					"pl7.app/table/visibility": "optional",
-					"pl7.app/isScore": "true",
-					"pl7.app/score/rankingOrder": "decreasing"
-				}
-			}
-		}
-	])
-
-	// per-(clonotype, feature) antigen-binding matrix (A-0011 v1.1 / A-0015): the within-clonotype
-	// fraction (one value per feature) and the advanced UMI count matrix. Axes reuse the clonotype key
-	// verbatim + the feature axis from the input feature column. Sparse: a feature with no signal in a
-	// clonotype simply has no row (aggregation-contract DP-4).
-	featureAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
-
-	matrixAxes := [
-		{ column: "scClonotypeKey", spec: scAxis },
-		{ column: "feature", spec: featureAxis }
-	]
-
-	importAndInject("result_fractions.csv", matrixAxes, [{
-		column: "fraction", id: "clonotypeFraction",
-		spec: {
-			name: "pl7.app/feature/clonotypeFraction", valueType: "Double",
-			annotations: {
-				"pl7.app/label": "Antigen fraction",
-				"pl7.app/format": ".3f",
-				"pl7.app/table/visibility": "default"
-			}
-		}
-	}])
-
-	importAndInject("result_counts.csv", matrixAxes, [{
-		column: "count", id: "clonotypeUmiCount",
-		spec: {
-			name: "pl7.app/feature/clonotypeUmiCount", valueType: "Int",
-			annotations: {
-				"pl7.app/label": "Antigen UMI count",
-				"pl7.app/table/visibility": "optional"
-			}
-		}
-	}])
-
-	// Optional per-clonotype gene expression (clonotype x gene): per-gene mean/max across the
-	// clonotype's cells (A-0019), emitted when a GEX column is selected in the settings modal.
-	if hasGex {
-		gexSpec := columns.getSpec(inputs.gexColumnId)
-		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId
-		exprLabel := inputs.expressionMethod == "max" ? "Max expression" : "Mean expression"
-		importAndInject("result_expression.csv", [
-			{ column: "scClonotypeKey", spec: scAxis },
-			{ column: "geneId", spec: geneAxis }
-		], [{
-			column: "expression", id: "expression",
-			spec: {
-				name: "pl7.app/rna-seq/clonotypeExpression", valueType: "Double",
-				domain: { "pl7.app/feature/aggregation": inputs.expressionMethod },
-				annotations: {
-					"pl7.app/label": exprLabel,
-					"pl7.app/format": ".3f",
-					"pl7.app/table/visibility": "optional"
-				}
-			}
-		}])
-	}
-
-	// per-clonotype categorical property: dominant cell type (dominant-category rule, spec A-0020),
-	// emitted when an annotation input is provided.
-	if hasAnnotation {
-		importAndInject("result_annotation.csv", [{ column: "scClonotypeKey", spec: scAxis }], [{
-			column: "dominantCellType", id: "domCellType",
-			spec: {
-				name: "pl7.app/rna-seq/clonotypeDominantCellType", valueType: "String",
-				annotations: {
-					"pl7.app/label": "Dominant cell type",
-					"pl7.app/isDiscreteFilter": "true",
-					"pl7.app/table/visibility": "default"
-				}
-			}
-		}])
-	}
-
-	// Readable clonotype identity, pulled from the VDJ dataset (import-vdj-data) via the bundle in
-	// main.tpl.tengo and joined here on the shared scClonotypeKey axis. The label column (pl7.app/label)
-	// relabels the opaque scClonotypeKey axis to "C-XXXXX"; the primary heavy/light CDR3 aa + V/J-gene
-	// columns arrive with import-vdj-data's own labels + table visibility, so their specs pass through
-	// verbatim (only trace is injected). All are keyed on scClonotypeKey alone — no extra axis — so they
-	// render in the flat per-clonotype table.
-	// The borrowed VDJ identity columns go ONLY into the display frame (see the fbDisplay/fbExport note
-	// above): re-exporting them would collide with import-vdj-data's own columns on the shared axis.
-	labelCol := columns.getColumn("clonotypeLabel")
-	fbDisplay.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
-
-	// Add each discovered identity column under a key derived from its own spec (name + key-sorted
-	// domain), not its position in the concatenated match list. A getColumns() query can return more
-	// than one column (e.g. heavy + light CDR3), and if the matched set or order shifts between runs a
-	// positional key would silently rename a column; a content key keeps a column's frame identity
-	// stable. The (name, domain) pair is unique across these three VDJ queries.
-	addIdentityCols := func(cols) {
-		for col in cols {
-			domain := col.spec.domain != undefined ? col.spec.domain : {}
-			fbDisplay.add("clonoIdentity_" + col.spec.name + "|" + string(canonical.encode(domain)), trace.inject(col.spec), col.data)
-		}
-	}
-	addIdentityCols(columns.getColumns("cdr3aa"))
-	addIdentityCols(columns.getColumns("vGene"))
-	addIdentityCols(columns.getColumns("jGene"))
-
-	displayPf := fbDisplay.build()
-	exportPf := fbExport.build()
-
 	return {
-		// in-block table: own columns + borrowed identity, self-contained
-		clonotypeTable: pframes.exportFrame(displayPf),
-		// GraphMaker plot frame (own columns + identity for axis labels); resolved by this block's model,
-		// not pool-published
-		propertiesPf: displayPf,
-		// result-pool export for downstream ranking: own columns ONLY (no borrowed identity — VDJM-24)
-		clonotypeProperties: exportPf
+		clonotypeTable: result.output("clonotypeTable"),
+		propertiesPf: result.output("propertiesPf"),
+		clonotypeProperties: result.output("clonotypeProperties")
 	}
 })
