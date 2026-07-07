@@ -230,6 +230,14 @@ export const platforma = BlockModelV3.create(dataModel)
   .outputWithStatus("distributionPf", (ctx) => graphPFrame(ctx, SCALAR_COLS))
   .output("distributionPCols", (ctx) => graphCols(ctx, SCALAR_COLS))
   .title(() => "VDJ Multiomic Integration")
+  // Subtitle reflects what this instance integrates onto clonotypes: antigen binding is always present;
+  // gene expression and cell type appear when those optional inputs are wired up.
+  .subtitle((ctx) => {
+    const parts = ["Antigen binding"];
+    if (ctx.data.gexColumnId) parts.push("gene expression");
+    if (ctx.data.annotationColumnId) parts.push("cell type");
+    return parts.join(" · ");
+  })
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/heatmap" as const, label: "Property Heatmap" },

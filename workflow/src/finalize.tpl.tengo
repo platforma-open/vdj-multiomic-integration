@@ -215,10 +215,27 @@ self.body(func(inputs) {
 	// column's frame identity stable if the matched set/order shifts between runs.
 	labelCol := columns.getColumn("clonotypeLabel")
 	fbDisplay.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
+	// Hide the borrowed per-chain (heavy/light) identity columns — CDR3 aa, V gene, J gene — by default,
+	// so the clonotype label + this block's own properties lead the results table and the chain details
+	// are opt-in. This helper receives exactly those columns (the cdr3aa / vGene / jGene queries); the
+	// clonotype LABEL (C-XXXXX) is added separately above and stays visible. Hidden by column identity,
+	// not by matching text in the label (an antigen name must never accidentally hide a column).
 	addIdentityCols := func(cols) {
 		for col in cols {
-			domain := col.spec.domain != undefined ? col.spec.domain : {}
-			fbDisplay.add("clonoIdentity_" + col.spec.name + "|" + string(canonical.encode(domain)), trace.inject(col.spec), col.data)
+			newAnnotations := {}
+			if col.spec.annotations != undefined {
+				for k, v in col.spec.annotations {
+					newAnnotations[k] = v
+				}
+			}
+			newAnnotations["pl7.app/table/visibility"] = "hidden"
+			newSpec := {}
+			for k, v in col.spec {
+				newSpec[k] = v
+			}
+			newSpec.annotations = newAnnotations
+			domain := newSpec.domain != undefined ? newSpec.domain : {}
+			fbDisplay.add("clonoIdentity_" + newSpec.name + "|" + string(canonical.encode(domain)), trace.inject(newSpec), col.data)
 		}
 	}
 	addIdentityCols(columns.getColumns("cdr3aa"))
