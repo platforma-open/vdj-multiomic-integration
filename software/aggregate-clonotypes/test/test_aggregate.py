@@ -181,22 +181,41 @@ def _write_csv(path, header, rows):
         w.writerows(rows)
 
 
-def _run_cli(tmp_path, feature_rows, linker_rows):
+def _run_cli(
+    tmp_path,
+    feature_rows,
+    linker_rows,
+    *,
+    gex_rows=None,
+    annotation_rows=None,
+    expression_method=None,
+):
     feats = tmp_path / "features.csv"
     linker = tmp_path / "linker.csv"
     _write_csv(feats, ["sampleId", "cellId", "feature", "umiCount"], feature_rows)
     _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
+    cmd = [
+        sys.executable,
+        str(SRC),
+        "--feature-csv",
+        str(feats),
+        "--linker-csv",
+        str(linker),
+        "--output-prefix",
+        str(tmp_path / "result"),
+    ]
+    if gex_rows is not None:
+        gex = tmp_path / "gex.csv"
+        _write_csv(gex, ["sampleId", "cellId", "geneId", "count"], gex_rows)
+        cmd += ["--gex-csv", str(gex)]
+        if expression_method is not None:
+            cmd += ["--expression-method", expression_method]
+    if annotation_rows is not None:
+        ann = tmp_path / "annotation.csv"
+        _write_csv(ann, ["sampleId", "cellId", "cellType"], annotation_rows)
+        cmd += ["--annotation-csv", str(ann)]
     subprocess.run(
-        [
-            sys.executable,
-            str(SRC),
-            "--feature-csv",
-            str(feats),
-            "--linker-csv",
-            str(linker),
-            "--output-prefix",
-            str(tmp_path / "result"),
-        ],
+        cmd,
         check=True,  # a mid-run crash surfaces as CalledProcessError -> test failure
         cwd=tmp_path,
     )
@@ -241,3 +260,80 @@ def test_cli_all_zero_counts_are_dropped_no_nan(tmp_path):
     with open(tmp_path / "result_properties.csv", newline="") as f:
         keys = {r["scClonotypeKey"] for r in csv.DictReader(f)}
     assert keys == {"C2"}  # C1 (all-zero) dropped; C2 retained
+
+
+# --- optional annotation branch: dominant cell type per clonotype (spec A-0020, dominant-category rule) ---
+
+
+@pytest.mark.slow
+def test_cli_annotation_dominant_cell_type(tmp_path):
+    # C1: 2x Tcell + 1x Bcell -> 2/3 = 0.67 >= 0.6 threshold -> Tcell.
+    # C2: 1x Tcell -> 1.0 -> Tcell.
+    # C3: 1x Tcell + 1x Bcell -> tied at the 0.5 floor, two winners -> "ambiguous" (spec A-0012).
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC", "cD", "cE", "cF")],
+        linker_rows=[
+            ("s1", "cA", "C1"),
+            ("s1", "cB", "C1"),
+            ("s1", "cC", "C1"),
+            ("s1", "cD", "C2"),
+            ("s1", "cE", "C3"),
+            ("s1", "cF", "C3"),
+        ],
+        annotation_rows=[
+            ("s1", "cA", "Tcell"),
+            ("s1", "cB", "Tcell"),
+            ("s1", "cC", "Bcell"),
+            ("s1", "cD", "Tcell"),
+            ("s1", "cE", "Tcell"),
+            ("s1", "cF", "Bcell"),
+        ],
+    )
+    with open(tmp_path / "result_annotation.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r["dominantCellType"] for r in csv.DictReader(f)}
+    assert rows == {"C1": "Tcell", "C2": "Tcell", "C3": "ambiguous"}
+
+
+# --- optional GEX branch: per-(clonotype, gene) mean/max expression (spec A-0019) ---
+# NB these pin an intentional semantic: the mean is over the cells that CARRY a count for the gene
+# (a sparse count matrix), not over every cell in the clonotype. C1/geneY below = mean(2) = 2.0, NOT
+# mean(2, 0) = 1.0 — geneY has no row for cB, and no zero is imputed.
+
+
+@pytest.mark.slow
+def test_cli_gex_mean_expression(tmp_path):
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cA", "AGX", 5), ("s1", "cB", "AGX", 5), ("s1", "cD", "AGX", 5)],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cD", "C2")],
+        gex_rows=[
+            ("s1", "cA", "geneX", 4),
+            ("s1", "cB", "geneX", 8),
+            ("s1", "cA", "geneY", 2),
+            ("s1", "cD", "geneX", 10),
+        ],
+        expression_method="mean",
+    )
+    with open(tmp_path / "result_expression.csv", newline="") as f:
+        rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
+    assert rows == {("C1", "geneX"): 6.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
+
+
+@pytest.mark.slow
+def test_cli_gex_max_expression(tmp_path):
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cA", "AGX", 5), ("s1", "cB", "AGX", 5), ("s1", "cD", "AGX", 5)],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cD", "C2")],
+        gex_rows=[
+            ("s1", "cA", "geneX", 4),
+            ("s1", "cB", "geneX", 8),
+            ("s1", "cA", "geneY", 2),
+            ("s1", "cD", "geneX", 10),
+        ],
+        expression_method="max",
+    )
+    with open(tmp_path / "result_expression.csv", newline="") as f:
+        rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
+    assert rows == {("C1", "geneX"): 8.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
