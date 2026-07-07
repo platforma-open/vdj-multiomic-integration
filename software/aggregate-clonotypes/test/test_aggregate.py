@@ -7,6 +7,7 @@ Run from software/:
 """
 
 import csv
+import json
 import math
 import pathlib
 import subprocess
@@ -14,7 +15,7 @@ import sys
 
 import numpy as np
 import pytest
-from aggregate_clonotypes import breadth, dominant_category, restriction_index
+from aggregate_clonotypes import breadth, dominant_category, present_features, restriction_index
 from compartment_ref import restriction_index as ref_restriction_index
 from hypothesis import given
 from hypothesis import strategies as st
@@ -65,6 +66,28 @@ def test_breadth_default_threshold_counts_nonzero():
 def test_breadth_with_threshold():
     # fractions 0.8/0.2; presence 0.3 -> only 0.8 passes -> 1
     assert breadth([8.0, 2.0], presence_threshold=0.3) == 1
+
+
+# --- per-antigen presence cutoff (feedback: per-antigen threshold = presence/binding cutoff) ---
+
+
+def test_present_features_default_keeps_all_nonzero():
+    # no per-antigen overrides, default 0.0 -> every nonzero feature survives
+    assert present_features({"A": 8, "B": 2}, {}, 0.0) == {"A": 8, "B": 2}
+
+
+def test_present_features_per_antigen_threshold_drops_below_cutoff():
+    # fractions A=0.8, B=0.2; B needs 0.3 -> B dropped, A (needs default 0.0) kept
+    assert present_features({"A": 8, "B": 2}, {"B": 0.3}, 0.0) == {"A": 8}
+
+
+def test_present_features_global_default_applies_when_unlisted():
+    # fractions 0.8/0.2; global default 0.25 -> only A survives
+    assert present_features({"A": 8, "B": 2}, {}, 0.25) == {"A": 8}
+
+
+def test_present_features_no_signal_is_empty():
+    assert present_features({"A": 0, "B": 0}, {}, 0.0) == {}
 
 
 # --- dominant category (spec A-0012, reused) ---
@@ -143,7 +166,13 @@ def test_cli_writes_outputs(features_csv, linker_csv, tmp_path):
         check=True,
         cwd=tmp_path,
     )
-    for name in ["result_counts.csv", "result_fractions.csv", "result_properties.csv"]:
+    for name in [
+        "result_counts.csv",
+        "result_fractions.csv",
+        "result_fractions_wide.csv",
+        "result_feature_names.json",
+        "result_properties.csv",
+    ]:
         assert (tmp_path / name).exists(), f"missing {name}"
 
 
@@ -189,6 +218,8 @@ def _run_cli(
     gex_rows=None,
     annotation_rows=None,
     expression_method=None,
+    presence_threshold=None,
+    presence_thresholds=None,
 ):
     feats = tmp_path / "features.csv"
     linker = tmp_path / "linker.csv"
@@ -204,6 +235,10 @@ def _run_cli(
         "--output-prefix",
         str(tmp_path / "result"),
     ]
+    if presence_threshold is not None:
+        cmd += ["--presence-threshold", str(presence_threshold)]
+    if presence_thresholds is not None:
+        cmd += ["--presence-thresholds", json.dumps(presence_thresholds)]
     if gex_rows is not None:
         gex = tmp_path / "gex.csv"
         _write_csv(gex, ["sampleId", "cellId", "geneId", "count"], gex_rows)
@@ -337,3 +372,49 @@ def test_cli_gex_max_expression(tmp_path):
     with open(tmp_path / "result_expression.csv", newline="") as f:
         rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
     assert rows == {("C1", "geneX"): 8.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
+
+
+# --- per-antigen fraction columns + feature-names output (feedback: one fraction pcolumn per antigen) ---
+
+
+@pytest.mark.slow
+def test_cli_wide_fractions_and_feature_names(tmp_path):
+    # C1 pooled: AGX 8, BGX 2 -> fractions 0.8/0.2. C2: only AGX -> 1.0 (0.0 for BGX, which it lacks).
+    _run_cli(
+        tmp_path,
+        feature_rows=[
+            ("s1", "cA", "AGX", 8),
+            ("s1", "cA", "BGX", 2),
+            ("s1", "cB", "AGX", 5),
+        ],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C2")],
+    )
+    with open(tmp_path / "result_feature_names.json") as f:
+        assert json.load(f) == ["AGX", "BGX"]  # sorted distinct present features
+    with open(tmp_path / "result_fractions_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r for r in csv.DictReader(f)}
+    assert set(rows["C1"]) == {"scClonotypeKey", "AGX", "BGX"}  # one column per antigen
+    assert float(rows["C1"]["AGX"]) == pytest.approx(0.8)
+    assert float(rows["C1"]["BGX"]) == pytest.approx(0.2)
+    assert float(rows["C2"]["AGX"]) == pytest.approx(1.0)
+    assert float(rows["C2"]["BGX"]) == pytest.approx(0.0)  # no BGX signal -> 0, not missing
+
+
+@pytest.mark.slow
+def test_cli_per_antigen_presence_threshold(tmp_path):
+    # C1: AGX 8 (0.8), BGX 2 (0.2). A per-antigen cutoff of 0.3 on BGX drops it from "present":
+    # breadth 2 -> 1, and the dominant call is made over surviving {AGX} -> AGX at 100%.
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cA", "AGX", 8), ("s1", "cA", "BGX", 2)],
+        linker_rows=[("s1", "cA", "C1")],
+        presence_thresholds={"BGX": 0.3},
+    )
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        row = next(csv.DictReader(f))
+    assert int(row["breadth"]) == 1  # only AGX survives its cutoff
+    assert row["dominantFeature"] == "AGX"
+    # The raw per-antigen fractions are unaffected by the presence cutoff (they report real signal).
+    with open(tmp_path / "result_fractions_wide.csv", newline="") as f:
+        wide = next(csv.DictReader(f))
+    assert float(wide["BGX"]) == pytest.approx(0.2)

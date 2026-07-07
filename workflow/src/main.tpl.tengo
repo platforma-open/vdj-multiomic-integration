@@ -60,7 +60,7 @@ wf.body(func(args) {
 		gexColumnId: args.gexColumnId,
 		annotationColumnId: args.annotationColumnId,
 		dominanceThreshold: args.dominanceThreshold,
-		presenceThreshold: args.presenceThreshold,
+		presenceThresholds: args.presenceThresholds,
 		expressionMethod: args.expressionMethod,
 		hasGex: args.gexColumnId != undefined,
 		hasAnnotation: args.annotationColumnId != undefined

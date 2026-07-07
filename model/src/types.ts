@@ -1,6 +1,16 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { PlDataTableStateV2, PlRef, SUniversalPColumnId } from "@platforma-sdk/model";
 
+/** Per-antigen configuration, keyed in BlockData by antigen name.
+ * `presenceThreshold` is the per-antigen presence/binding cutoff (a within-clonotype fraction 0..1):
+ * an antigen counts as present for a clonotype only when its fraction exceeds this. It drives breadth
+ * and the dominant-antigen call, so it IS projected to args (changing it re-runs the block).
+ * `hidden` removes the antigen from the in-block plots ONLY — pure view state, never projected to args. */
+export type AntigenSetting = {
+  presenceThreshold?: number;
+  hidden?: boolean;
+};
+
 /**
  * Workflow inputs (projected from BlockData by the args lambda; validated there).
  * The anchored column ids are stored together with `datasetRef` so the anchor map
@@ -14,7 +24,7 @@ export type BlockArgs = {
   gexColumnId?: SUniversalPColumnId; // optional gene-expression count matrix (spec A-0019)
   annotationColumnId?: SUniversalPColumnId; // optional cell-type annotation (spec A-0020)
   dominanceThreshold: number; // spec A-0012, default 0.6, floor 0.5
-  presenceThreshold: number; // spec A-0013, default 0.0
+  presenceThresholds: Record<string, number>; // per-antigen presence cutoffs (feature name -> fraction); default-valued entries omitted
   expressionMethod: "mean" | "max"; // spec A-0019, default mean
 };
 
@@ -25,11 +35,12 @@ export type BlockData = {
   gexColumnId?: SUniversalPColumnId;
   annotationColumnId?: SUniversalPColumnId;
   dominanceThreshold: number;
-  presenceThreshold: number;
+  // Per-antigen settings keyed by antigen name; auto-populated from the discovered antigens. Threshold
+  // feeds args (re-run); `hidden` is plots-only (UI). Keyed by name so a toggle survives antigen-set churn.
+  antigenSettings: Record<string, AntigenSetting>;
   expressionMethod: "mean" | "max";
   tableState: PlDataTableStateV2; // PlAgDataTableV2 grid state (UI-only, never projected to args)
   // GraphMaker view state, one per plot page (UI-only, never projected to args).
-  heatmapState: GraphMakerState; // clonotype × antigen binding heatmap
-  bindingBubbleState: GraphMakerState; // clonotype × antigen bubble (size = UMI, color = fraction)
+  heatmapState: GraphMakerState; // clonotype × antigen property heatmap
   distributionState: GraphMakerState; // restriction-index / breadth histogram
 };

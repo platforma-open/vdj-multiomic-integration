@@ -39,21 +39,26 @@ const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down t
 
 const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   dominanceThreshold: 0.6,
-  presenceThreshold: 0.0,
+  antigenSettings: {},
   expressionMethod: "mean" as const,
   tableState: createPlDataTableStateV2(),
+  // Property heatmap defaults to the clustered template with column mean-normalization — the view the
+  // BEAM6 reference project settled on (feedback: "defaults set to what is currently set in BEAM6").
   heatmapState: {
-    title: "Antigen binding heatmap",
-    template: "heatmap" as const,
+    title: "Antigen property heatmap",
+    template: "heatmapClustered" as const,
     currentTab: null,
-  },
-  bindingBubbleState: {
-    title: "Antigen binding profile",
-    template: "bubble" as const,
-    currentTab: null,
+    layersSettings: {
+      heatmapClustered: {
+        normalizationDirection: "column",
+        normalizationMethod: "meanNormalization",
+        dendrogramX: false,
+        dendrogramY: false,
+      },
+    },
   },
   distributionState: {
-    title: "Reactivity distribution",
+    title: "Distribution",
     template: "bins" as const,
     currentTab: null,
     // Green bars to match the other views (default template fill would otherwise be white).
@@ -112,6 +117,16 @@ export const platforma = BlockModelV3.create(dataModel)
     if (!data.datasetRef) throw new Error("Select a VDJ single-cell dataset");
     if (!data.featureColumnId)
       throw new Error("Select the Feature Integration per-cell feature column");
+    // Per-antigen presence cutoffs -> a canonical (sorted-key), default-pruned map. Only antigens with a
+    // real override (> 0) reach args, so toggling an antigen's plot visibility (UI-only `hidden`) or
+    // leaving a card at the 0.0 default never stales the block.
+    const presenceThresholds: Record<string, number> = {};
+    for (const name of Object.keys(data.antigenSettings ?? {}).sort()) {
+      const t = data.antigenSettings[name]?.presenceThreshold;
+      if (typeof t === "number" && t > 0) {
+        presenceThresholds[name] = Math.min(1, t);
+      }
+    }
     return {
       datasetRef: data.datasetRef,
       featureColumnId: data.featureColumnId,
@@ -121,8 +136,7 @@ export const platforma = BlockModelV3.create(dataModel)
       annotationColumnId: data.annotationColumnId,
       // canonicalize + clamp to the 0.5 floor (A-0012)
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
-      // presenceThreshold now feeds the emitted breadth column; default 0 = count features with any signal.
-      presenceThreshold: data.presenceThreshold ?? 0.0,
+      presenceThresholds,
       expressionMethod: data.expressionMethod ?? "mean",
     };
   })
@@ -139,19 +153,30 @@ export const platforma = BlockModelV3.create(dataModel)
     ),
   )
   // Feature Integration per-cell UMI-count column, discovered via the cell linker from the dataset
-  // anchor. Value is the global hit id (workflow-resolvable) — see discoverLinkedOptions.
-  .output("featureOptions", (ctx) =>
-    ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/feature/umiCount") : [],
-  )
-  // Optional per-cell gene-expression count matrix, discovered via the cell linker; set by the GEX
-  // dropdown in the settings modal to drive the per-gene expression output (A-0019).
-  .output("gexOptions", (ctx) =>
-    ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/rna-seq/countMatrix") : [],
-  )
-  // Optional per-cell cell-type annotation
-  .output("annotationOptions", (ctx) =>
-    ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/rna-seq/cellType") : [],
-  )
+  // anchor. Value is the global hit id (workflow-resolvable) — see discoverLinkedOptions. Ungated (the
+  // query is pool-wide, not dataset-scoped) so the settings modal can auto-select it on dataset pick.
+  .output("featureOptions", (ctx) => discoverLinkedOptions(ctx, "pl7.app/feature/umiCount"))
+  // Optional per-cell gene-expression count matrix, auto-selected on dataset pick to drive the per-gene
+  // expression output (A-0019).
+  .output("gexOptions", (ctx) => discoverLinkedOptions(ctx, "pl7.app/rna-seq/countMatrix"))
+  // Optional per-cell cell-type annotation, auto-selected on dataset pick.
+  .output("annotationOptions", (ctx) => discoverLinkedOptions(ctx, "pl7.app/rna-seq/cellType"))
+  // Antigens discovered from the emitted per-antigen fraction columns (one column per antigen, the
+  // antigen in the featureId domain) — the source list for the per-antigen Settings cards. Available
+  // after the first run (the antigen set is data-derived); reads specs only, so it is cheap. Sorted + deduped.
+  .output("antigenOptions", (ctx) => {
+    try {
+      const cols = ctx.outputs?.resolve("clonotypeTable")?.getPColumns();
+      if (!cols) return [];
+      const names = cols
+        .filter((c) => c.spec.name === "pl7.app/feature/antigenFraction")
+        .map((c) => c.spec.domain?.["pl7.app/feature/featureId"])
+        .filter((n): n is string => typeof n === "string");
+      return [...new Set(names)].sort();
+    } catch {
+      return [];
+    }
+  })
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback. The Python aggregation is a long-running (16 GiB) step.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
@@ -206,11 +231,14 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("distributionPCols", (ctx) => graphCols(ctx, SCALAR_COLS))
   .title(() => "VDJ Multiomic Integration")
   .sections(() => [
-    { type: "link" as const, href: "/" as const, label: "Table" },
-    { type: "link" as const, href: "/heatmap" as const, label: "Binding heatmap" },
-    { type: "link" as const, href: "/bubble" as const, label: "Binding profile" },
-    { type: "link" as const, href: "/distribution" as const, label: "Reactivity" },
+    { type: "link" as const, href: "/" as const, label: "Main" },
+    { type: "link" as const, href: "/heatmap" as const, label: "Property Heatmap" },
+    { type: "link" as const, href: "/distribution" as const, label: "Distribution" },
   ])
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;
+export type { AntigenSetting, BlockArgs, BlockData } from "./types";
+// Re-exported for the UI package (which depends on this model package, not @platforma-sdk/model directly).
+export { createPlDataTableStateV2 } from "@platforma-sdk/model";
+export type { PlRef } from "@platforma-sdk/model";
