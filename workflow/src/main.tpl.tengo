@@ -16,7 +16,11 @@ wf.body(func(args) {
 	bundleBuilder.ignoreMissingDomains() // robust matching of the VDJ dataset's per-clonotype property columns
 	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
 	bundleBuilder.addSingle(args.featureColumnId) // Feature Integration per-cell feature column (anchored id)
-	bundleBuilder.addSingle({ name: "pl7.app/sc/cellLinker" }, "linker") // cellLinker resolved by spec under the anchor
+	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
+	// aggregate template can count the matches and emit a clear error when the dataset has more than one
+	// clonotype grouping (VDJM-14) — addSingle would otherwise fail with the opaque backend message
+	// "expected single element, got N". The aggregate requires exactly one linker.
+	bundleBuilder.addMulti({ name: "pl7.app/sc/cellLinker" }, "linker")
 
 	// Readable clonotype identity for the results table, resolved from the VDJ dataset (import-vdj-data)
 	// under the anchor's scClonotypeKey axis (idx 1). The label column (pl7.app/label -> "C-XXXXX")

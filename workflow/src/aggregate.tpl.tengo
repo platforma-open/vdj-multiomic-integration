@@ -16,6 +16,7 @@ xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 canonical := import("@platforma-sdk/workflow-tengo:canonical") // deterministic key-sorted JSON, for content-stable column keys
+ll := import("@platforma-sdk/workflow-tengo:ll")
 
 aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
 
@@ -27,7 +28,20 @@ self.body(func(inputs) {
 	hasAnnotation := inputs.hasAnnotation
 
 	featureSpec := columns.getSpec(inputs.featureColumnId)
-	linkerSpec := columns.getSpec("linker")
+
+	// Cell-linker resolution + grouping guard (VDJM-14). The linker is resolved as a MULTI query in
+	// main.tpl.tengo; v1 aggregates over a single clonotype grouping, so require exactly one linker.
+	// More than one means the VDJ dataset carries multiple groupings (V(D)J imported with multiple chain
+	// sets) — fail with an actionable message instead of the opaque backend "expected single element".
+	linkerCols := columns.getColumns("linker")
+	if len(linkerCols) == 0 {
+		ll.panic("VDJ Multiomic Integration: the selected dataset has no cell linker. Choose a single-cell VDJ dataset produced by the Import V(D)J Data block.")
+	}
+	if len(linkerCols) > 1 {
+		ll.panic("VDJ Multiomic Integration v1 supports a single clonotype grouping, but the selected VDJ dataset has %d cell linkers. Importing V(D)J data with multiple chain sets produces one grouping per set — re-import V(D)J Data with a single chain set (e.g. IGHeavy + IGLight), or run one grouping at a time.", len(linkerCols))
+	}
+	linkerCol := linkerCols[0]
+	linkerSpec := linkerCol.spec
 
 	// A per-cell column -> flat CSV: value column under `valueHeader`, each axis renamed by position
 	// to the header the Python expects. Same mem/cpu budget for every cell CSV.
@@ -49,8 +63,8 @@ self.body(func(inputs) {
 	// Strip the isLinkerColumn marker before export: as a linker, csvFileBuilder/ptabler build a
 	// linker_index that requires exactly 2 connected components and reject this 3-axis cell linker
 	// [sampleId, cellId, scClonotypeKey]. We only need the axis tuple as flat rows, so export it as a
-	// plain column (same Parquet data, just not flagged as a linker).
-	linkerCol := columns.getColumn("linker")
+	// plain column (same Parquet data, just not flagged as a linker). linkerCol comes from the
+	// grouping guard above (the single resolved cell linker).
 	linkerAnnotations := {}
 	for k, v in linkerCol.spec.annotations {
 		if k != "pl7.app/isLinkerColumn" {
