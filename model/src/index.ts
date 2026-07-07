@@ -1,6 +1,12 @@
-import type { InferOutputsType, RenderCtx, SUniversalPColumnId } from "@platforma-sdk/model";
+import type {
+  InferOutputsType,
+  PFrameHandle,
+  RenderCtx,
+  SUniversalPColumnId,
+} from "@platforma-sdk/model";
 import {
   BlockModelV3,
+  createPFrameForGraphs,
   createPlDataTableStateV2,
   createPlDataTableV3,
   DataModelBuilder,
@@ -37,6 +43,21 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   presenceThreshold: 0.0,
   expressionMethod: "mean" as const,
   tableState: createPlDataTableStateV2(),
+  heatmapState: {
+    title: "Antigen binding heatmap",
+    template: "heatmap" as const,
+    currentTab: null,
+  },
+  bindingBubbleState: {
+    title: "Antigen binding profile",
+    template: "bubble" as const,
+    currentTab: null,
+  },
+  distributionState: {
+    title: "Reactivity distribution",
+    template: "bins" as const,
+    currentTab: null,
+  },
 }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -123,8 +144,34 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
+  // One PFrame for all plot pages (heatmap / binding bubble / reactivity distribution). Each page's
+  // defaultOptions picks the columns it needs, mirroring titeseq's single summary PFrame feeding
+  // multiple charts. getPColumns() throws while the frame is still computing — the catch maps that to
+  // "not ready" (undefined), which withStatus + GraphMaker render as a loading state.
+  .outputWithStatus("graphsPf", (ctx): PFrameHandle | undefined => {
+    try {
+      const pCols = ctx.outputs?.resolve("propertiesPf")?.getPColumns();
+      if (pCols === undefined || pCols.length === 0) return undefined;
+      return createPFrameForGraphs(ctx, pCols);
+    } catch {
+      return undefined;
+    }
+  })
+  // Raw columns for the pages' defaultOptions (axis/value binding). Same source as graphsPf.
+  .output("graphsPCols", (ctx) => {
+    try {
+      return ctx.outputs?.resolve("propertiesPf")?.getPColumns();
+    } catch {
+      return undefined;
+    }
+  })
   .title(() => "VDJ Multiomic Integration")
-  .sections(() => [{ type: "link" as const, href: "/" as const, label: "Main" }])
+  .sections(() => [
+    { type: "link" as const, href: "/" as const, label: "Table" },
+    { type: "link" as const, href: "/heatmap" as const, label: "Binding heatmap" },
+    { type: "link" as const, href: "/bubble" as const, label: "Binding profile" },
+    { type: "link" as const, href: "/distribution" as const, label: "Reactivity" },
+  ])
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;

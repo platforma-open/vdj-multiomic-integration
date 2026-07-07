@@ -1,3 +1,4 @@
+import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { PlDataTableStateV2, PlRef, SUniversalPColumnId } from "@platforma-sdk/model";
 
 /**
@@ -27,4 +28,8 @@ export type BlockData = {
   presenceThreshold: number;
   expressionMethod: "mean" | "max";
   tableState: PlDataTableStateV2; // PlAgDataTableV2 grid state (UI-only, never projected to args)
+  // GraphMaker view state, one per plot page (UI-only, never projected to args).
+  heatmapState: GraphMakerState; // clonotype × antigen binding heatmap
+  bindingBubbleState: GraphMakerState; // clonotype × antigen bubble (size = UMI, color = fraction)
+  distributionState: GraphMakerState; // restriction-index / breadth histogram
 };

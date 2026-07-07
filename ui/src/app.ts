@@ -1,5 +1,8 @@
 import { platforma } from "@platforma-open/milaboratories.vdj-multiomic-integration.model";
 import { defineAppV3 } from "@platforma-sdk/ui-vue";
+import BindingBubblePage from "./pages/BindingBubblePage.vue";
+import DistributionPage from "./pages/DistributionPage.vue";
+import HeatmapPage from "./pages/HeatmapPage.vue";
 import MainPage from "./pages/MainPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, (app) => {
@@ -8,6 +11,9 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
     progress: () => app.model.outputs.isRunning,
     routes: {
       "/": () => MainPage,
+      "/heatmap": () => HeatmapPage,
+      "/bubble": () => BindingBubblePage,
+      "/distribution": () => DistributionPage,
     },
   };
 });
