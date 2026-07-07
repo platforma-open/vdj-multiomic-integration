@@ -56,6 +56,8 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
     title: "Reactivity distribution",
     template: "bins" as const,
     currentTab: null,
+    // Green bars to match the other views (default template fill would otherwise be white).
+    layersSettings: { bins: { fillColor: "#99E099" } },
   },
 }));
 
