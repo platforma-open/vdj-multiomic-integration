@@ -70,6 +70,13 @@ const tableSettings = usePlDataTableSettingsV2({
         :max-value="1.0"
         :step="0.05"
       />
+      <PlNumberField
+        v-model="app.model.data.presenceThreshold"
+        label="Presence threshold (breadth)"
+        :min-value="0.0"
+        :max-value="1.0"
+        :step="0.05"
+      />
     </PlSlideModal>
   </PlBlockPage>
 </template>
