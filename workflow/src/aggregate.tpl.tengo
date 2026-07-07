@@ -3,13 +3,12 @@
 // imports the per-clonotype columns reusing the scClonotypeKey axis verbatim so they join the
 // existing clonotype table. No sample axis (spec A-0005).
 //
-// SCOPE (phase 2, 2026-07-04): categorical properties + the numerical antigen-binding profile.
-// Emits the dominant-category-rule columns (dominantFeature; dominantCellType when an annotation is
-// provided) AND the numerical properties spec'd in A-0011 v1.1 / A-0015: restrictionIndex, breadth,
-// per-feature fraction columns, and the advanced feature UMI count matrix. The Python aggregator has
-// always computed these; phase 2 un-gates the workflow imports. Still DEFERRED: per-gene expression
-// (GEX branch below stays intact but dormant — inert while no UI exposes gexColumnId) and any
-// per-clonotype specificity score (A-0014 is per-cell in Feature Integration; not a VDJM output).
+// SCOPE: categorical properties + the numerical antigen-binding profile + optional per-gene
+// expression. Emits the dominant-category-rule columns (dominantFeature; dominantCellType when an
+// annotation is provided), the numerical properties (A-0011 v1.1 / A-0015: restrictionIndex, breadth,
+// per-feature fraction columns, advanced feature UMI count matrix), and — when a GEX column is
+// selected — per-gene mean/max expression per clonotype (A-0019). Not a VDJM output: any
+// per-clonotype specificity score (A-0014 is per-cell in Feature Integration).
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
@@ -91,12 +90,12 @@ self.body(func(inputs) {
 	}
 
 	// Retrieve the properties CSV (dominantFeature + restrictionIndex + breadth) and the per-feature
-	// fraction + UMI count matrices. The GEX expression CSV stays dormant (deferred).
+	// fraction + UMI count matrices, and (when a GEX column is selected) the expression CSV.
 	run = run.
 		saveFile("result_properties.csv").
 		saveFile("result_fractions.csv").
 		saveFile("result_counts.csv")
-	if hasGex { // DORMANT (deferred per-gene expression): inert while gexColumnId is unset
+	if hasGex {
 		run = run.saveFile("result_expression.csv")
 	}
 	if hasAnnotation {
@@ -207,10 +206,8 @@ self.body(func(inputs) {
 		}
 	}])
 
-	// DORMANT (v1 categorical-only): optional per-clonotype gene expression (clonotype x gene) is a
-	// numerical property, deferred to the numerical-properties plan. Kept intact but inert — hasGex is
-	// always false while no UI exposes gexColumnId. Re-activating is a UI-only change (restore the GEX
-	// dropdown) plus re-adding saveFile("result_expression.csv") above.
+	// Optional per-clonotype gene expression (clonotype x gene): per-gene mean/max across the
+	// clonotype's cells (A-0019), emitted when a GEX column is selected in the settings modal.
 	if hasGex {
 		gexSpec := columns.getSpec(inputs.gexColumnId)
 		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId

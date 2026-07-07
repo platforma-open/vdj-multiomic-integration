@@ -21,6 +21,11 @@ const settingsOpen = ref(
   app.model.data.datasetRef === undefined || app.model.data.featureColumnId === undefined,
 );
 
+const expressionMethodOptions = [
+  { label: "Mean", value: "mean" as const },
+  { label: "Max", value: "max" as const },
+];
+
 const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.clonotypeTable,
 });
@@ -62,6 +67,17 @@ const tableSettings = usePlDataTableSettingsV2({
         v-model="app.model.data.annotationColumnId"
         :options="app.model.outputs.annotationOptions"
         label="Cell-type annotation (optional)"
+      />
+      <PlDropdown
+        v-model="app.model.data.gexColumnId"
+        :options="app.model.outputs.gexOptions"
+        label="Gene expression (optional)"
+      />
+      <PlDropdown
+        v-if="app.model.data.gexColumnId"
+        v-model="app.model.data.expressionMethod"
+        :options="expressionMethodOptions"
+        label="Expression aggregation"
       />
       <PlNumberField
         v-model="app.model.data.dominanceThreshold"

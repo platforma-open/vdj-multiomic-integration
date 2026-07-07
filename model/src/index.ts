@@ -68,9 +68,8 @@ export const platforma = BlockModelV3.create(dataModel)
     return {
       datasetRef: data.datasetRef,
       featureColumnId: data.featureColumnId,
-      // DORMANT (deferred per-gene expression): gexColumnId + expressionMethod feed the GEX
-      // expression output, which phase 2 does not emit. Kept in args so re-activation restores the
-      // UI GEX control without reshaping args. See workflow/src/aggregate.tpl.tengo.
+      // gexColumnId + expressionMethod feed the optional per-gene expression output (A-0019),
+      // activated via the GEX controls in the settings modal. See workflow/src/aggregate.tpl.tengo.
       gexColumnId: data.gexColumnId,
       annotationColumnId: data.annotationColumnId,
       // canonicalize + clamp to the 0.5 floor (A-0012)
@@ -97,10 +96,8 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("featureOptions", (ctx) =>
     ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/feature/umiCount") : [],
   )
-  // DORMANT (v1 = categorical only): GEX drives the deferred numerical expression output; no UI
-  // control currently sets gexColumnId. Kept so the numerical-properties plan restores the GEX
-  // dropdown without re-adding this query.
-  // Optional per-cell gene-expression count matrix
+  // Optional per-cell gene-expression count matrix, discovered via the cell linker; set by the GEX
+  // dropdown in the settings modal to drive the per-gene expression output (A-0019).
   .output("gexOptions", (ctx) =>
     ctx.data.datasetRef ? discoverLinkedOptions(ctx, "pl7.app/rna-seq/countMatrix") : [],
   )
