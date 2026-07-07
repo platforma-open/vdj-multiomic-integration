@@ -63,13 +63,11 @@ def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
     return "ambiguous"
 
 
-def _clonotype_feature_counts(feature_csv: str, linker_csv: str) -> pl.DataFrame:
-    """(sampleId, cellId, feature, umiCount) join linker -> (scClonotypeKey, feature, count) summed
-    across samples (spec A-0005). Inner join drops cells with no clonotype (DP-4); features whose
-    summed count is 0 in a clonotype are dropped too, keeping the matrix sparse per DP-4 and avoiding
-    a 0/0 within-clonotype fraction downstream."""
-    feats = pl.read_csv(feature_csv)
-    linker = pl.read_csv(linker_csv)  # sampleId, cellId, scClonotypeKey
+def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.DataFrame:
+    """(sampleId, cellId, feature, umiCount) join linker (sampleId, cellId, scClonotypeKey) ->
+    (scClonotypeKey, feature, count) summed across samples (spec A-0005). Inner join drops cells with
+    no clonotype (DP-4); features whose summed count is 0 in a clonotype are dropped too, keeping the
+    matrix sparse per DP-4 and avoiding a 0/0 within-clonotype fraction downstream."""
     return (
         feats.join(linker, on=["sampleId", "cellId"], how="inner")
         .group_by(["scClonotypeKey", "feature"])
@@ -99,7 +97,11 @@ def main() -> None:
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    cf = _clonotype_feature_counts(args.feature_csv, args.linker_csv)
+    # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the GEX and
+    # annotation joins below; reading it a single time avoids re-parsing a per-cell table (one row per
+    # cell) up to three times in a 16 GiB run.
+    linker = pl.read_csv(args.linker_csv)  # sampleId, cellId, scClonotypeKey
+    cf = _clonotype_feature_counts(pl.read_csv(args.feature_csv), linker)
 
     # advanced count matrix (clonotype x feature)
     (
@@ -142,7 +144,6 @@ def main() -> None:
 
     # optional GEX: mean/max per (clonotype, gene)
     if args.gex_csv is not None:
-        linker = pl.read_csv(args.linker_csv)
         gex = pl.read_csv(args.gex_csv).join(linker, on=["sampleId", "cellId"], how="inner")
         agg = pl.col("count").mean() if args.expression_method == "mean" else pl.col("count").max()
         (
@@ -154,7 +155,6 @@ def main() -> None:
 
     # optional annotation: dominant cell type per clonotype (dominant-category rule)
     if args.annotation_csv is not None:
-        linker = pl.read_csv(args.linker_csv)
         ann = pl.read_csv(args.annotation_csv).join(linker, on=["sampleId", "cellId"], how="inner")
         ann_rows = []
         for (clono,), grp in ann.group_by(["scClonotypeKey"]):
