@@ -112,10 +112,25 @@ self.body(func(inputs) {
 		label: "VDJ Multiomic Integration"
 	})
 
-	fb := pframes.pFrameBuilder()
+	// Two frames from the same per-clonotype results:
+	//  - displayPf: VDJM's own columns + the borrowed VDJ identity columns (label, CDR3, V/J). Feeds the
+	//    in-block table (self-contained exportFrame) and the GraphMaker plot frame. Not published to the
+	//    result pool, so the borrowed identity columns cause no cross-block collision here.
+	//  - exportPf: VDJM's own columns ONLY. This is what we publish (exports.clonotypeProperties) for
+	//    downstream blocks (e.g. lead selection) to anchor. It must NOT re-export the borrowed identity
+	//    columns: those already live in the pool under the same scClonotypeKey axis (from import-vdj-data),
+	//    so a re-export makes headers like 'cdr3Sequence.Heavy' non-unique when a downstream block anchors
+	//    this clonotype dataset (VDJM-24).
+	fbDisplay := pframes.pFrameBuilder()
+	fbExport := pframes.pFrameBuilder()
+	// VDJM's own computed columns belong in BOTH frames.
+	addOwn := func(k, spec, data) {
+		fbDisplay.add(k, spec, data)
+		fbExport.add(k, spec, data)
+	}
 	injectAll := func(rawPf) {
 		for k, v in rawPf {
-			fb.add(k, trace.inject(v.spec), v.data)
+			addOwn(k, trace.inject(v.spec), v.data)
 		}
 	}
 	// import a result CSV and inject its columns into the frame. Every result is a per-clonotype
@@ -251,8 +266,10 @@ self.body(func(inputs) {
 	// columns arrive with import-vdj-data's own labels + table visibility, so their specs pass through
 	// verbatim (only trace is injected). All are keyed on scClonotypeKey alone — no extra axis — so they
 	// render in the flat per-clonotype table.
+	// The borrowed VDJ identity columns go ONLY into the display frame (see the fbDisplay/fbExport note
+	// above): re-exporting them would collide with import-vdj-data's own columns on the shared axis.
 	labelCol := columns.getColumn("clonotypeLabel")
-	fb.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
+	fbDisplay.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
 
 	// Add each discovered identity column under a key derived from its own spec (name + key-sorted
 	// domain), not its position in the concatenated match list. A getColumns() query can return more
@@ -262,17 +279,23 @@ self.body(func(inputs) {
 	addIdentityCols := func(cols) {
 		for col in cols {
 			domain := col.spec.domain != undefined ? col.spec.domain : {}
-			fb.add("clonoIdentity_" + col.spec.name + "|" + string(canonical.encode(domain)), trace.inject(col.spec), col.data)
+			fbDisplay.add("clonoIdentity_" + col.spec.name + "|" + string(canonical.encode(domain)), trace.inject(col.spec), col.data)
 		}
 	}
 	addIdentityCols(columns.getColumns("cdr3aa"))
 	addIdentityCols(columns.getColumns("vGene"))
 	addIdentityCols(columns.getColumns("jGene"))
 
-	finalPf := fb.build()
+	displayPf := fbDisplay.build()
+	exportPf := fbExport.build()
 
 	return {
-		clonotypeTable: pframes.exportFrame(finalPf),
-		clonotypeProperties: finalPf
+		// in-block table: own columns + borrowed identity, self-contained
+		clonotypeTable: pframes.exportFrame(displayPf),
+		// GraphMaker plot frame (own columns + identity for axis labels); resolved by this block's model,
+		// not pool-published
+		propertiesPf: displayPf,
+		// result-pool export for downstream ranking: own columns ONLY (no borrowed identity — VDJM-24)
+		clonotypeProperties: exportPf
 	}
 })
