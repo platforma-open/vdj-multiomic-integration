@@ -93,7 +93,7 @@ wf.body(func(args) {
 		outputs: {
 			clonotypeTable: result.output("clonotypeTable"),
 			// raw per-clonotype PFrame (own columns + borrowed clonotype identity), surfaced to the model so
-			// it can build the GraphMaker frames (heatmap / binding bubble / reactivity distribution). This is
+			// it can build the GraphMaker frames (property heatmap + distribution histogram). This is
 			// the display frame — it carries the borrowed CDR3/V/J identity for axis labels but is NOT
 			// pool-published, so there is no cross-block collision.
 			propertiesPf: result.output("propertiesPf")
