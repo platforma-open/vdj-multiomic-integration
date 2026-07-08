@@ -68,9 +68,9 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   },
 }));
 
-// Clonotype × antigen matrix columns ([scClonotypeKey, featureId]) — the binding heatmap + bubble.
+// Clonotype × antigen matrix columns ([scClonotypeKey, featureId]) — the property heatmap.
 const MATRIX_COLS = ["pl7.app/feature/clonotypeFraction", "pl7.app/feature/clonotypeUmiCount"];
-// Per-clonotype scalar columns ([scClonotypeKey]) — the reactivity histogram.
+// Per-clonotype scalar columns ([scClonotypeKey]) — the distribution histogram.
 const SCALAR_COLS = ["pl7.app/vdj/restrictionIndex", "pl7.app/vdj/breadth"];
 // The clonotype axis label column (pl7.app/label -> "C-XXXXX"). Included in the graph frames so
 // GraphMaker relabels the scClonotypeKey axis to the readable clone id instead of the raw content
@@ -221,7 +221,7 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   // Graph frames, split by axis structure. A GraphMaker chart tabulates its whole PFrame into one
   // PTable, so a frame must be axis-homogeneous: the [scClonotypeKey, featureId] matrix feeds the
-  // heatmap + bubble; the [scClonotypeKey] scalars feed the reactivity histogram. Mixing axes (or the
+  // property heatmap; the [scClonotypeKey] scalars feed the distribution histogram. Mixing axes (or the
   // [scClonotypeKey, geneId] expression column) in one frame has no valid join.
   //
   // Source columns from the exportFrame'd `clonotypeTable` output, NOT the raw `propertiesPf`: only the

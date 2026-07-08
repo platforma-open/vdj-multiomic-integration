@@ -17,6 +17,6 @@ Both need the antigen set, which is data-derived, so the aggregation template is
 Settings and views:
 - Picking the VDJ dataset auto-discovers the feature/antigen, gene-expression and cell-type columns from the shared sample + cell barcode (the manual per-column dropdowns are gone).
 - A per-antigen card list: each antigen has a hide toggle (removes it from the in-block plots only) and a presence threshold — the minimum within-clonotype fraction for that antigen to count as present, which drives breadth and the dominant-antigen call (restriction index is unaffected).
-- Tabs renamed: Table → Main, Reactivity → Distribution (default binned value is now breadth), Binding Heatmap → Property Heatmap (defaults to the clustered heatmap with column mean-normalization); the Binding Profile tab is removed.
+- Views: the clonotype × antigen heatmap tab is titled "Property Heatmap" and defaults to the clustered heatmap with column mean-normalization; the histogram tab is titled "Distribution" and bins breadth by default; the results tab is titled "Main".
 - The borrowed per-chain (heavy/light) CDR3 aa / V / J gene identity columns default to hidden in the results table; the clonotype label and this block's own properties lead.
 - Editable block-label subtitle: defaults to the selected dataset's label and feeds the `pl7.app/trace` label on every emitted column, so distinct VDJM instances are distinguishable in the block header and in downstream column provenance.
