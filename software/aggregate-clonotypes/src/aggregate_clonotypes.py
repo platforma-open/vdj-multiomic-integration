@@ -149,14 +149,26 @@ def main() -> None:
     # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the GEX and
     # annotation joins below; reading it a single time avoids re-parsing a per-cell table (one row per
     # cell) up to three times in a 16 GiB run.
-    linker = pl.read_csv(args.linker_csv)  # sampleId, cellId, scClonotypeKey
+    # Force identifier / label columns to String: barcodes, sample ids and categorical labels (e.g.
+    # Leiden cluster ids "0","1") look numeric to CSV type inference, which would coerce them to Int and
+    # both break the String-typed dominant column and mismatch join keys across the per-cell tables.
+    linker = pl.read_csv(
+        args.linker_csv,
+        schema_overrides={"sampleId": pl.String, "cellId": pl.String, "scClonotypeKey": pl.String},
+    )  # sampleId, cellId, scClonotypeKey
 
     # Feature (antigen) aggregation is optional: the block also runs on VDJ + annotations with no feature
     # integration. When a feature CSV is present, emit the count / fraction matrices and the per-clonotype
     # properties (RI, breadth, dominant feature); otherwise skip them.
     feature_names: list[str] = []
     if args.feature_csv is not None:
-        cf = _clonotype_feature_counts(pl.read_csv(args.feature_csv), linker)
+        cf = _clonotype_feature_counts(
+            pl.read_csv(
+                args.feature_csv,
+                schema_overrides={"sampleId": pl.String, "cellId": pl.String, "feature": pl.String},
+            ),
+            linker,
+        )
         feature_names = sorted(cf["feature"].unique().to_list()) if not cf.is_empty() else []
 
         # advanced count matrix (clonotype x feature)
@@ -220,7 +232,10 @@ def main() -> None:
 
     # optional GEX: mean/max per (clonotype, gene)
     if args.gex_csv is not None:
-        gex = pl.read_csv(args.gex_csv).join(linker, on=["sampleId", "cellId"], how="inner")
+        gex = pl.read_csv(
+            args.gex_csv,
+            schema_overrides={"sampleId": pl.String, "cellId": pl.String, "geneId": pl.String},
+        ).join(linker, on=["sampleId", "cellId"], how="inner")
         agg = pl.col("count").mean() if args.expression_method == "mean" else pl.col("count").max()
         (
             gex.group_by(["scClonotypeKey", "geneId"])
@@ -249,7 +264,10 @@ def main() -> None:
             # drop cells with a null annotation value so None never competes as a category in the
             # dominance calc (a clonotype whose cells are all null then gets a null dominant call)
             ann = (
-                pl.read_csv(entry["csv"])
+                pl.read_csv(
+                    entry["csv"],
+                    schema_overrides={"sampleId": pl.String, "cellId": pl.String, "value": pl.String},
+                )
                 .join(linker, on=["sampleId", "cellId"], how="inner")
                 .filter(pl.col("value").is_not_null())
             )
