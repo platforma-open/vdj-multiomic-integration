@@ -221,7 +221,7 @@ export const platforma = BlockModelV3.create(dataModel)
   // confines column + label discovery to this block's columns; maxHops:0 disables linker traversal
   // since the PFrame is self-contained. retentive avoids blanking the grid on recompute; withStatus
   // feeds PlAgDataTableV2 the OutputWithStatus envelope. NB: under maxHops:0 the scClonotypeKey /
-  // featureId axis labels resolve only from within our PFrame — verify label rendering in the Task-7
+  // featureId axis labels resolve only from within our PFrame — verify label rendering in the
   // backend test.
   .output(
     "clonotypeTable",

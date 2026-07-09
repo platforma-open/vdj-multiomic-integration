@@ -4,7 +4,7 @@
 // dataset's cell linker resolved by spec, and the optional GEX / annotation columns) and delegates
 // the per-clonotype aggregation to an ephemeral template that awaits the bundle's data. The linker
 // is resolved here by selector under the anchor — the model does not pass a linker id (its args
-// lambda has no ctx); see docs/aggregation-contract.md.
+// lambda has no ctx).
 wf := import("@platforma-sdk/workflow-tengo:workflow")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
@@ -23,7 +23,7 @@ wf.body(func(args) {
 	}
 	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
 	// aggregate template can count the matches and emit a clear error when the dataset has more than one
-	// clonotype grouping (VDJM-14) — addSingle would otherwise fail with the opaque backend message
+	// clonotype grouping — addSingle would otherwise fail with the opaque backend message
 	// "expected single element, got N". The aggregate requires exactly one linker.
 	bundleBuilder.addMulti({ name: "pl7.app/sc/cellLinker" }, "linker")
 
@@ -60,7 +60,7 @@ wf.body(func(args) {
 	// every emitted column. Both take the SAME unresolved bundle reference (finalize cannot receive it
 	// from aggregate — aggregate holds it resolved, with methods, which is not serializable). Ephemeral,
 	// not pure: safe cross-project dedup of the 16 GiB step is deferred to v1.1 (needs the exported columns
-	// content-addressed via pl7.app/contentTag, verified against the SDK — see decisions/2026-07-07.md); a
+	// content-addressed via pl7.app/contentTag, verified against the SDK); a
 	// subtly non-canonical pure template would ship silent wrong cache hits.
 	agg := render.createEphemeral(aggregateTpl, {
 		columns: columns,
@@ -117,7 +117,7 @@ wf.body(func(args) {
 	return {
 		outputs: outputs,
 		exports: {
-			// own columns ONLY (no borrowed identity) — see the VDJM-24 note in finalize.tpl.tengo
+			// own columns ONLY (no borrowed identity) — see the note in finalize.tpl.tengo
 			clonotypeProperties: result.output("clonotypeProperties")
 		}
 	}
