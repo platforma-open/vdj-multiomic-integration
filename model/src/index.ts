@@ -142,21 +142,27 @@ export const platforma = BlockModelV3.create(dataModel)
     // A card added but not yet given a selection gates the run (mirrors Lead Selection's half-filled card).
     if (integrations.some((i) => !i.ref || !i.kind))
       throw new Error("Every added card must select a data type");
-    // Project the generic integration list to the workflow's column slots: the first feature-kind
-    // integration is the feature matrix, the first annotation-kind is the annotation.
+    // Project the generic integration list to the workflow: the first feature-kind integration is the
+    // feature matrix; every annotation-kind integration is folded on independently (dominant-category).
     const feature = integrations.find((i) => i.kind === "feature");
-    const annotation = integrations.find((i) => i.kind === "annotation");
     // Single presence cutoff from the feature integration, applied to every feature (0 when absent).
     const presenceThreshold = Math.min(1, Math.max(0, feature?.presenceThreshold ?? 0));
     // Per-integration dominance thresholds, clamped to the 0.5 floor (A-0012).
     const dom = (i?: { dominanceThreshold?: number }) =>
       Math.max(DOMINANCE_FLOOR, i?.dominanceThreshold ?? 0.6);
+    const annotations = integrations
+      .filter((i) => i.kind === "annotation")
+      .map((i) => ({
+        ref: i.ref as SUniversalPColumnId,
+        dominanceThreshold: dom(i),
+        label: i.label ?? "Annotation",
+      }));
     return {
       datasetRef: data.datasetRef,
       featureColumnId: feature?.ref,
-      annotationColumnId: annotation?.ref,
+      featureLabel: feature?.label,
       featureDominanceThreshold: dom(feature),
-      annotationDominanceThreshold: dom(annotation),
+      annotations,
       presenceThreshold,
       expressionMethod: "mean",
       // Block label -> workflow trace label (finalize). Changing it re-runs so the new label is baked

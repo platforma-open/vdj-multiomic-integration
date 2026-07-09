@@ -41,8 +41,9 @@ wf.body(func(args) {
 	if args.gexColumnId != undefined {
 		bundleBuilder.addSingle(args.gexColumnId)
 	}
-	if args.annotationColumnId != undefined {
-		bundleBuilder.addSingle(args.annotationColumnId)
+	// every annotation-kind integration (0..N), each folded on independently
+	for ann in args.annotations {
+		bundleBuilder.addSingle(ann.ref)
 	}
 
 	columns := bundleBuilder.build()
@@ -52,7 +53,7 @@ wf.body(func(args) {
 	blockId := wf.blockId().getDataAsJson()
 
 	hasGex := args.gexColumnId != undefined
-	hasAnnotation := args.annotationColumnId != undefined
+	hasAnnotation := len(args.annotations) > 0
 
 	// Two ephemeral (not pure) steps. `aggregate` runs the Python (deterministic — it sorts every output)
 	// and returns the result files; `finalize` awaits the feature-names value + the bundle and builds
@@ -66,9 +67,8 @@ wf.body(func(args) {
 		blockId: blockId,
 		featureColumnId: args.featureColumnId,
 		gexColumnId: args.gexColumnId,
-		annotationColumnId: args.annotationColumnId,
+		annotations: args.annotations,
 		featureDominanceThreshold: args.featureDominanceThreshold,
-		annotationDominanceThreshold: args.annotationDominanceThreshold,
 		presenceThreshold: args.presenceThreshold,
 		expressionMethod: args.expressionMethod,
 		hasFeature: hasFeature,
@@ -85,8 +85,10 @@ wf.body(func(args) {
 		fractionsWideFile: hasFeature ? agg.output("fractionsWideFile") : undefined,
 		countsFile: hasFeature ? agg.output("countsFile") : undefined,
 		expressionFile: hasGex ? agg.output("expressionFile") : undefined,
-		annotationFile: hasAnnotation ? agg.output("annotationFile") : undefined,
+		annotationsWideFile: hasAnnotation ? agg.output("annotationsWideFile") : undefined,
+		annotations: args.annotations,
 		featureColumnId: args.featureColumnId,
+		featureLabel: args.featureLabel,
 		gexColumnId: args.gexColumnId,
 		blockId: blockId,
 		expressionMethod: args.expressionMethod,
