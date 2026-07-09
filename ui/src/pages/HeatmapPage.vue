@@ -8,8 +8,8 @@ const app = useApp();
 
 // Clonotype × antigen property heatmap: y = clonotype, x = antigen, color = within-clonotype fraction.
 // The block default template is the clustered heatmap with column mean-normalization (set in the model's
-// heatmapState init — the BEAM6 reference configuration). The fraction column is keyed on
-// [scClonotypeKey, featureId] (axesSpec[0], axesSpec[1]).
+// heatmapState init). The fraction column is keyed on [scClonotypeKey, featureId]
+// (axesSpec[0], axesSpec[1]).
 const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | null => {
   const pCols = app.model.outputs.bindingPCols;
   if (!pCols || pCols.length === 0) return null;
@@ -22,19 +22,6 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | null =>
     { inputName: "y", selectedSource: fraction.spec.axesSpec[0] },
     { inputName: "value", selectedSource: fraction.spec },
   ];
-
-  // Hide antigens the user toggled off (the card eye) from the heatmap: filter the feature axis to the
-  // visible set. Plots-only (never re-runs the block); applied as an initial GraphMaker filter default.
-  const antigens = app.model.outputs.antigenOptions ?? [];
-  const settings = app.model.data.antigenSettings ?? {};
-  const visible = antigens.filter((name) => settings[name]?.hidden !== true);
-  if (visible.length < antigens.length) {
-    options.push({
-      inputName: "filters",
-      selectedSource: fraction.spec.axesSpec[1],
-      selectedFilterValues: visible,
-    });
-  }
   return options;
 });
 </script>

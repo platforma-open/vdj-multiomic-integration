@@ -13,10 +13,14 @@ aggregateTpl := assets.importTemplate(":aggregate")
 finalizeTpl := assets.importTemplate(":finalize")
 
 wf.body(func(args) {
+	hasFeature := args.featureColumnId != undefined
 	bundleBuilder := wf.createPBundleBuilder()
 	bundleBuilder.ignoreMissingDomains() // robust matching of the VDJ dataset's per-clonotype property columns
 	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
-	bundleBuilder.addSingle(args.featureColumnId) // Feature Integration per-cell feature column (anchored id)
+	// Feature Integration per-cell feature column (anchored id). Optional: a VDJ + annotations run has none.
+	if hasFeature {
+		bundleBuilder.addSingle(args.featureColumnId)
+	}
 	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
 	// aggregate template can count the matches and emit a clear error when the dataset has more than one
 	// clonotype grouping (VDJM-14) — addSingle would otherwise fail with the opaque backend message
@@ -37,8 +41,9 @@ wf.body(func(args) {
 	if args.gexColumnId != undefined {
 		bundleBuilder.addSingle(args.gexColumnId)
 	}
-	if args.annotationColumnId != undefined {
-		bundleBuilder.addSingle(args.annotationColumnId)
+	// every annotation-kind integration (0..N), each folded on independently
+	for ann in args.annotations {
+		bundleBuilder.addSingle(ann.ref)
 	}
 
 	columns := bundleBuilder.build()
@@ -48,7 +53,7 @@ wf.body(func(args) {
 	blockId := wf.blockId().getDataAsJson()
 
 	hasGex := args.gexColumnId != undefined
-	hasAnnotation := args.annotationColumnId != undefined
+	hasAnnotation := len(args.annotations) > 0
 
 	// Two ephemeral (not pure) steps. `aggregate` runs the Python (deterministic — it sorts every output)
 	// and returns the result files; `finalize` awaits the feature-names value + the bundle and builds
@@ -62,10 +67,11 @@ wf.body(func(args) {
 		blockId: blockId,
 		featureColumnId: args.featureColumnId,
 		gexColumnId: args.gexColumnId,
-		annotationColumnId: args.annotationColumnId,
-		dominanceThreshold: args.dominanceThreshold,
-		presenceThresholds: args.presenceThresholds,
+		annotations: args.annotations,
+		featureDominanceThreshold: args.featureDominanceThreshold,
+		presenceThreshold: args.presenceThreshold,
 		expressionMethod: args.expressionMethod,
+		hasFeature: hasFeature,
 		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})
@@ -73,31 +79,43 @@ wf.body(func(args) {
 	result := render.createEphemeral(finalizeTpl, {
 		columns: columns,
 		featureNames: agg.output("featureNames"),
-		propertiesFile: agg.output("propertiesFile"),
-		fractionsLongFile: agg.output("fractionsLongFile"),
-		fractionsWideFile: agg.output("fractionsWideFile"),
-		countsFile: agg.output("countsFile"),
+		annotationValues: agg.output("annotationValues"),
+		propertiesFile: hasFeature ? agg.output("propertiesFile") : undefined,
+		fractionsLongFile: hasFeature ? agg.output("fractionsLongFile") : undefined,
+		fractionsWideFile: hasFeature ? agg.output("fractionsWideFile") : undefined,
+		countsFile: hasFeature ? agg.output("countsFile") : undefined,
 		expressionFile: hasGex ? agg.output("expressionFile") : undefined,
-		annotationFile: hasAnnotation ? agg.output("annotationFile") : undefined,
+		annotationsWideFile: hasAnnotation ? agg.output("annotationsWideFile") : undefined,
+		compositionFile: hasAnnotation ? agg.output("compositionFile") : undefined,
+		annotations: args.annotations,
 		featureColumnId: args.featureColumnId,
+		featureLabel: args.featureLabel,
 		gexColumnId: args.gexColumnId,
 		blockId: blockId,
 		expressionMethod: args.expressionMethod,
 		customBlockLabel: args.customBlockLabel,
 		defaultBlockLabel: args.defaultBlockLabel,
+		hasFeature: hasFeature,
 		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})
 
+	outputs := {
+		clonotypeTable: result.output("clonotypeTable"),
+		// raw per-clonotype PFrame (own columns + borrowed clonotype identity), surfaced to the model so
+		// it can build the GraphMaker frames (property heatmap + distribution histogram). This is
+		// the display frame — it carries the borrowed CDR3/V/J identity for axis labels but is NOT
+		// pool-published, so there is no cross-block collision.
+		propertiesPf: result.output("propertiesPf")
+	}
+	// small aggregated (annotation x category -> clonotype count) frame for the Composition stacked bar;
+	// only present when at least one annotation is integrated.
+	if hasAnnotation {
+		outputs.compositionTable = result.output("compositionTable")
+	}
+
 	return {
-		outputs: {
-			clonotypeTable: result.output("clonotypeTable"),
-			// raw per-clonotype PFrame (own columns + borrowed clonotype identity), surfaced to the model so
-			// it can build the GraphMaker frames (property heatmap + distribution histogram). This is
-			// the display frame — it carries the borrowed CDR3/V/J identity for axis labels but is NOT
-			// pool-published, so there is no cross-block collision.
-			propertiesPf: result.output("propertiesPf")
-		},
+		outputs: outputs,
 		exports: {
 			// own columns ONLY (no borrowed identity) — see the VDJM-24 note in finalize.tpl.tengo
 			clonotypeProperties: result.output("clonotypeProperties")
