@@ -8,7 +8,7 @@
 // map with methods, from awaitState), which cannot be serialized as a template input. main.tpl passes
 // the *unresolved* bundle reference to finalize instead.
 //
-// SCOPE here: resolve the bundle, guard the single-grouping requirement (VDJM-14), build the input
+// SCOPE here: resolve the bundle, guard the single-grouping requirement, build the input
 // CSVs, and run the Python. All column-spec construction (dominant antigen + discreteValues, the
 // per-antigen fraction columns, RI/breadth, the matrices, optional GEX/annotation, borrowed identity)
 // lives in finalize.tpl.tengo.
@@ -28,7 +28,7 @@ self.body(func(inputs) {
 	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
 
-	// Cell-linker resolution + grouping guard (VDJM-14). The linker is resolved as a MULTI query in
+	// Cell-linker resolution + grouping guard. The linker is resolved as a MULTI query in
 	// main.tpl.tengo; v1 aggregates over a single clonotype grouping, so require exactly one linker.
 	// More than one means the VDJ dataset carries multiple groupings (V(D)J imported with multiple chain
 	// sets) — fail with an actionable message instead of the opaque backend "expected single element".

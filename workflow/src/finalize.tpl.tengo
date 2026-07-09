@@ -36,7 +36,7 @@ self.body(func(inputs) {
 	annotationValues := json.decode(string(inputs.annotationValues.getData()))
 
 	// scClonotypeKey axis reused verbatim from the resolved cell linker (single grouping guaranteed by
-	// the VDJM-14 guard in aggregate.tpl.tengo) so every emitted column joins the existing clonotype table.
+	// the single-grouping guard in aggregate.tpl.tengo) so every emitted column joins the existing clonotype table.
 	linkerCol := columns.getColumns("linker")[0]
 	scAxis := linkerCol.spec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
 
@@ -52,7 +52,7 @@ self.body(func(inputs) {
 		label: traceLabel
 	})
 
-	// Two frames (VDJM-24): displayPf = own columns + borrowed VDJ identity (feeds the in-block table +
+	// Two frames: displayPf = own columns + borrowed VDJ identity (feeds the in-block table +
 	// GraphMaker frames; NOT pool-published, so the borrowed identity causes no cross-block collision);
 	// exportPf = own columns ONLY (published as clonotypeProperties for downstream Lead Selection). The
 	// borrowed identity columns must NOT be re-exported — they already live in the pool under the same
@@ -242,7 +242,7 @@ self.body(func(inputs) {
 		importAndInject(inputs.annotationsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], annCols, addOwn)
 	}
 
-	// Borrowed VDJ identity (label + primary CDR3 aa + V/J genes) -> displayPf ONLY (VDJM-24). Keyed on
+	// Borrowed VDJ identity (label + primary CDR3 aa + V/J genes) -> displayPf ONLY. Keyed on
 	// scClonotypeKey alone so they render in the flat per-clonotype table; content-derived keys keep a
 	// column's frame identity stable if the matched set/order shifts between runs.
 	labelCol := columns.getColumn("clonotypeLabel")
