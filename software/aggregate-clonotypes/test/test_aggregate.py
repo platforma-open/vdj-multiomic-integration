@@ -32,7 +32,7 @@ _counts = st.lists(
 )
 
 
-# --- restriction index (spec A-0013; compartment_analysis.py:214) ---
+# --- restriction index (parity with compartment_analysis.py:214) ---
 
 
 def test_ri_single_feature_is_one():
@@ -56,7 +56,7 @@ def test_ri_no_signal_is_nan():
     assert math.isnan(restriction_index([0.0, 0.0]))
 
 
-# --- breadth (spec A-0013; compartment_analysis.py:387) ---
+# --- breadth (parity with compartment_analysis.py:387) ---
 
 
 def test_breadth_default_threshold_counts_nonzero():
@@ -68,7 +68,7 @@ def test_breadth_with_threshold():
     assert breadth([8.0, 2.0], presence_threshold=0.3) == 1
 
 
-# --- per-antigen presence cutoff (feedback: per-antigen threshold = presence/binding cutoff) ---
+# --- per-antigen presence cutoff (per-antigen threshold = presence/binding cutoff) ---
 
 
 def test_present_features_default_keeps_all_nonzero():
@@ -90,7 +90,7 @@ def test_present_features_no_signal_is_empty():
     assert present_features({"A": 0, "B": 0}, {}, 0.0) == {}
 
 
-# --- dominant category (spec A-0012, reused) ---
+# --- dominant category (reused) ---
 
 
 def test_dominant_winner():
@@ -134,7 +134,7 @@ def test_dominant_result_in_domain(counts, threshold):
     assert r is None or r == "ambiguous" or r in counts
 
 
-# --- parity vs the verbatim compartment_analysis.py reference (spec A-0013) ---
+# --- parity vs the verbatim compartment_analysis.py reference ---
 
 
 @given(_counts)
@@ -289,7 +289,7 @@ def test_cli_disjoint_join_emits_empty_not_crash(tmp_path):
 @pytest.mark.slow
 def test_cli_all_zero_counts_are_dropped_no_nan(tmp_path):
     # A clonotype whose only feature rows are all-zero UMI has no antigen signal: it must be dropped
-    # (sparse, DP-4), never emit a 0/0=NaN fraction or a null-dtype dominant column.
+    # (sparse), never emit a 0/0=NaN fraction or a null-dtype dominant column.
     _run_cli(
         tmp_path,
         feature_rows=[
@@ -307,14 +307,14 @@ def test_cli_all_zero_counts_are_dropped_no_nan(tmp_path):
     assert keys == {"C2"}  # C1 (all-zero) dropped; C2 retained
 
 
-# --- optional annotation branch: dominant cell type per clonotype (spec A-0020, dominant-category rule) ---
+# --- optional annotation branch: dominant cell type per clonotype (dominant-category rule) ---
 
 
 @pytest.mark.slow
 def test_cli_annotation_dominant_cell_type(tmp_path):
     # C1: 2x Tcell + 1x Bcell -> 2/3 = 0.67 >= 0.6 threshold -> Tcell.
     # C2: 1x Tcell -> 1.0 -> Tcell.
-    # C3: 1x Tcell + 1x Bcell -> tied at the 0.5 floor, two winners -> "ambiguous" (spec A-0012).
+    # C3: 1x Tcell + 1x Bcell -> tied at the 0.5 floor, two winners -> "ambiguous".
     _run_cli(
         tmp_path,
         feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC", "cD", "cE", "cF")],
@@ -338,6 +338,33 @@ def test_cli_annotation_dominant_cell_type(tmp_path):
     with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
         rows = {r["scClonotypeKey"]: r["ann0"] for r in csv.DictReader(f)}
     assert rows == {"C1": "Tcell", "C2": "Tcell", "C3": "ambiguous"}
+
+
+@pytest.mark.slow
+def test_cli_annotation_null_values_excluded_from_dominance(tmp_path):
+    # Cells with a null annotation value must not count as a competing category. Without dropping them,
+    # C1 = {Tcell: 2, null: 2} ties and reads "ambiguous"; dropping nulls leaves {Tcell: 2} -> "Tcell".
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC", "cD")],
+        linker_rows=[
+            ("s1", "cA", "C1"),
+            ("s1", "cB", "C1"),
+            ("s1", "cC", "C1"),
+            ("s1", "cD", "C1"),
+        ],
+        annotation_rows=[
+            ("s1", "cA", "Tcell"),
+            ("s1", "cB", "Tcell"),
+            ("s1", "cC", None),
+            ("s1", "cD", None),
+        ],
+    )
+    with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r["ann0"] for r in csv.DictReader(f)}
+    assert rows == {"C1": "Tcell"}
+    with open(tmp_path / "result_annotation_values.json") as f:
+        assert json.load(f)["ann0"] == ["Tcell"]  # null is not a category
 
 
 @pytest.mark.slow
@@ -391,7 +418,7 @@ def test_cli_no_feature_annotation_only(tmp_path):
     assert not (tmp_path / "result_fractions.csv").exists()
 
 
-# --- optional GEX branch: per-(clonotype, gene) mean/max expression (spec A-0019) ---
+# --- optional GEX branch: per-(clonotype, gene) mean/max expression ---
 # NB these pin an intentional semantic: the mean is over the cells that CARRY a count for the gene
 # (a sparse count matrix), not over every cell in the clonotype. C1/geneY below = mean(2) = 2.0, NOT
 # mean(2, 0) = 1.0 — geneY has no row for cB, and no zero is imputed.
@@ -435,7 +462,7 @@ def test_cli_gex_max_expression(tmp_path):
     assert rows == {("C1", "geneX"): 8.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
 
 
-# --- per-antigen fraction columns + feature-names output (feedback: one fraction pcolumn per antigen) ---
+# --- per-antigen fraction columns + feature-names output (one fraction pcolumn per antigen) ---
 
 
 @pytest.mark.slow
