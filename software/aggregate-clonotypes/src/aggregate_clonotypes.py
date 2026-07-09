@@ -118,7 +118,7 @@ def _write_sorted(rows: list[dict], schema: dict, out_path: str) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--feature-csv", required=True)
+    p.add_argument("--feature-csv", default=None)
     p.add_argument("--linker-csv", required=True)
     p.add_argument("--gex-csv", default=None)
     p.add_argument("--annotation-csv", default=None)
@@ -155,70 +155,75 @@ def main() -> None:
     # annotation joins below; reading it a single time avoids re-parsing a per-cell table (one row per
     # cell) up to three times in a 16 GiB run.
     linker = pl.read_csv(args.linker_csv)  # sampleId, cellId, scClonotypeKey
-    cf = _clonotype_feature_counts(pl.read_csv(args.feature_csv), linker)
 
-    # Distinct feature/antigen names present across all clonotypes, sorted. Written for the workflow to
-    # (1) build one per-antigen fraction p-column per name and (2) populate the dominant-antigen
-    # column's discreteValues so downstream Lead Selection offers it as a multi-select filter.
-    feature_names = sorted(cf["feature"].unique().to_list()) if not cf.is_empty() else []
+    # Feature (antigen) aggregation is optional: the block also runs on VDJ + annotations with no feature
+    # integration. When a feature CSV is present, emit the count / fraction matrices and the per-clonotype
+    # properties (RI, breadth, dominant feature); otherwise skip them.
+    feature_names: list[str] = []
+    if args.feature_csv is not None:
+        cf = _clonotype_feature_counts(pl.read_csv(args.feature_csv), linker)
+        feature_names = sorted(cf["feature"].unique().to_list()) if not cf.is_empty() else []
+
+        # advanced count matrix (clonotype x feature)
+        (
+            cf.select(["scClonotypeKey", "feature", "count"])
+            .sort(["scClonotypeKey", "feature"])
+            .write_csv(f"{args.output_prefix}_counts.csv")
+        )
+
+        # per-feature fractions, long (clonotype x feature) — drives the in-block property heatmap
+        frac_long = cf.with_columns(
+            (pl.col("count") / pl.col("count").sum().over("scClonotypeKey")).alias("fraction")
+        )
+        (
+            frac_long.select(["scClonotypeKey", "feature", "fraction"])
+            .sort(["scClonotypeKey", "feature"])
+            .write_csv(f"{args.output_prefix}_fractions.csv")
+        )
+
+        # per-feature fractions, wide (one column per antigen, keyed [scClonotypeKey]) — each becomes a
+        # per-clonotype scalar column for Lead Selection. Clonotypes with no signal for an antigen get 0.
+        if feature_names:
+            wide = (
+                frac_long.pivot(on="feature", index="scClonotypeKey", values="fraction")
+                .fill_null(0.0)
+                .select(["scClonotypeKey", *feature_names])
+                .sort("scClonotypeKey")
+            )
+        else:
+            wide = pl.DataFrame(schema={"scClonotypeKey": pl.String})
+        wide.write_csv(f"{args.output_prefix}_fractions_wide.csv")
+
+        # per-clonotype scalar properties: RI, breadth, dominant feature. Breadth and the dominant call
+        # use the present features (presence cutoff); RI is over every nonzero feature.
+        prop_rows = []
+        for (clono,), grp in cf.group_by(["scClonotypeKey"]):
+            counts = grp["count"].to_list()
+            per_feature = dict(zip(grp["feature"].to_list(), counts))
+            present = present_features(per_feature, presence_thresholds, args.presence_threshold)
+            prop_rows.append(
+                {
+                    "scClonotypeKey": clono,
+                    "restrictionIndex": restriction_index(counts),
+                    "breadth": len(present),
+                    "dominantFeature": dominant_category(present, feature_dominance),
+                }
+            )
+        _write_sorted(
+            prop_rows,
+            {
+                "scClonotypeKey": pl.String,
+                "restrictionIndex": pl.Float64,
+                "breadth": pl.Int64,
+                "dominantFeature": pl.String,
+            },
+            f"{args.output_prefix}_properties.csv",
+        )
+
+    # distinct feature names (empty when no feature integration) — for the dominant-antigen discreteValues
+    # and the per-antigen fraction columns downstream.
     with open(f"{args.output_prefix}_feature_names.json", "w") as f:
         json.dump(feature_names, f)
-
-    # advanced count matrix (clonotype x feature)
-    (
-        cf.select(["scClonotypeKey", "feature", "count"])
-        .sort(["scClonotypeKey", "feature"])
-        .write_csv(f"{args.output_prefix}_counts.csv")
-    )
-
-    # per-feature fractions, long (clonotype x feature) — drives the in-block property heatmap
-    frac_long = cf.with_columns((pl.col("count") / pl.col("count").sum().over("scClonotypeKey")).alias("fraction"))
-    (
-        frac_long.select(["scClonotypeKey", "feature", "fraction"])
-        .sort(["scClonotypeKey", "feature"])
-        .write_csv(f"{args.output_prefix}_fractions.csv")
-    )
-
-    # per-feature fractions, wide (one column per antigen, keyed [scClonotypeKey]) — the workflow
-    # imports each antigen column as its own per-clonotype scalar p-column for Lead Selection.
-    # Clonotypes with no signal for an antigen get 0 (they DO have signal for others, so 0 is the true
-    # fraction, not missing). Column order pinned to sorted feature_names for canonicality.
-    if feature_names:
-        wide = (
-            frac_long.pivot(on="feature", index="scClonotypeKey", values="fraction")
-            .fill_null(0.0)
-            .select(["scClonotypeKey", *feature_names])
-            .sort("scClonotypeKey")
-        )
-    else:
-        wide = pl.DataFrame(schema={"scClonotypeKey": pl.String})
-    wide.write_csv(f"{args.output_prefix}_fractions_wide.csv")
-
-    # per-clonotype scalar properties: RI, breadth, dominant feature. Breadth and the dominant call use
-    # the present features (per-antigen presence cutoff); RI is over every nonzero feature.
-    prop_rows = []
-    for (clono,), grp in cf.group_by(["scClonotypeKey"]):
-        counts = grp["count"].to_list()
-        per_feature = dict(zip(grp["feature"].to_list(), counts))
-        present = present_features(per_feature, presence_thresholds, args.presence_threshold)
-        prop_rows.append(
-            {
-                "scClonotypeKey": clono,
-                "restrictionIndex": restriction_index(counts),
-                "breadth": len(present),
-                "dominantFeature": dominant_category(present, feature_dominance),
-            }
-        )
-    _write_sorted(
-        prop_rows,
-        {
-            "scClonotypeKey": pl.String,
-            "restrictionIndex": pl.Float64,
-            "breadth": pl.Int64,
-            "dominantFeature": pl.String,
-        },
-        f"{args.output_prefix}_properties.csv",
-    )
 
     # optional GEX: mean/max per (clonotype, gene)
     if args.gex_csv is not None:

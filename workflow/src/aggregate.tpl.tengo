@@ -53,8 +53,7 @@ self.body(func(inputs) {
 		return b.build()
 	}
 
-	// feature column -> CSV (sampleId, cellId, feature, umiCount)
-	featCsvFile := buildCellCsv(columns.getColumn(inputs.featureColumnId), "umiCount", ["sampleId", "cellId", "feature"])
+	hasFeature := inputs.featureColumnId != undefined
 
 	// cellLinker -> CSV (sampleId, cellId, scClonotypeKey); the linker value column is unused by the Python.
 	// Strip the isLinkerColumn marker before export: as a linker, csvFileBuilder/ptabler build a
@@ -78,17 +77,21 @@ self.body(func(inputs) {
 		software(aggSw).
 		mem("16GiB").
 		cpu(4).
-		addFile("features.csv", featCsvFile).
 		addFile("linker.csv", linkerCsvFile).
-		arg("--feature-csv").arg("features.csv").
 		arg("--linker-csv").arg("linker.csv").
-		arg("--dominance-threshold-feature").arg(string(inputs.featureDominanceThreshold)).
 		arg("--output-prefix").arg("result")
 
-	// presence cutoff (within-clonotype fraction) applied to every feature; feeds breadth and the
-	// dominant-feature call.
-	if inputs.presenceThreshold != undefined {
-		run = run.arg("--presence-threshold").arg(string(inputs.presenceThreshold))
+	// feature column -> CSV (sampleId, cellId, feature, umiCount) + its thresholds. Optional: skipped for a
+	// VDJ + annotations run with no feature integration.
+	if hasFeature {
+		featCsvFile := buildCellCsv(columns.getColumn(inputs.featureColumnId), "umiCount", ["sampleId", "cellId", "feature"])
+		run = run.addFile("features.csv", featCsvFile).
+			arg("--feature-csv").arg("features.csv").
+			arg("--dominance-threshold-feature").arg(string(inputs.featureDominanceThreshold))
+		// presence cutoff (within-clonotype fraction) applied to every feature; feeds breadth + the dominant call.
+		if inputs.presenceThreshold != undefined {
+			run = run.arg("--presence-threshold").arg(string(inputs.presenceThreshold))
+		}
 	}
 
 	if hasGex {
@@ -108,13 +111,18 @@ self.body(func(inputs) {
 	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
 	// wide) + UMI count matrices, the feature-names list (as content, read in finalize), and — when
 	// selected — the GEX / annotation CSVs.
+	// feature-names + annotation-values are always emitted (empty when the corresponding input is absent);
+	// the feature matrices / properties CSVs only when a feature is integrated.
 	run = run.
-		saveFile("result_properties.csv").
-		saveFile("result_fractions.csv").
-		saveFile("result_fractions_wide.csv").
-		saveFile("result_counts.csv").
 		saveFileContent("result_feature_names.json").
 		saveFileContent("result_annotation_values.json")
+	if hasFeature {
+		run = run.
+			saveFile("result_properties.csv").
+			saveFile("result_fractions.csv").
+			saveFile("result_fractions_wide.csv").
+			saveFile("result_counts.csv")
+	}
 	if hasGex {
 		run = run.saveFile("result_expression.csv")
 	}
@@ -129,11 +137,13 @@ self.body(func(inputs) {
 	// present: a template output field cannot be assigned undefined.
 	result := {
 		featureNames: run.getFileContent("result_feature_names.json"),
-		annotationValues: run.getFileContent("result_annotation_values.json"),
-		propertiesFile: run.getFile("result_properties.csv"),
-		fractionsLongFile: run.getFile("result_fractions.csv"),
-		fractionsWideFile: run.getFile("result_fractions_wide.csv"),
-		countsFile: run.getFile("result_counts.csv")
+		annotationValues: run.getFileContent("result_annotation_values.json")
+	}
+	if hasFeature {
+		result.propertiesFile = run.getFile("result_properties.csv")
+		result.fractionsLongFile = run.getFile("result_fractions.csv")
+		result.fractionsWideFile = run.getFile("result_fractions_wide.csv")
+		result.countsFile = run.getFile("result_counts.csv")
 	}
 	if hasGex {
 		result.expressionFile = run.getFile("result_expression.csv")

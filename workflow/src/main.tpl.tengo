@@ -13,10 +13,14 @@ aggregateTpl := assets.importTemplate(":aggregate")
 finalizeTpl := assets.importTemplate(":finalize")
 
 wf.body(func(args) {
+	hasFeature := args.featureColumnId != undefined
 	bundleBuilder := wf.createPBundleBuilder()
 	bundleBuilder.ignoreMissingDomains() // robust matching of the VDJ dataset's per-clonotype property columns
 	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
-	bundleBuilder.addSingle(args.featureColumnId) // Feature Integration per-cell feature column (anchored id)
+	// Feature Integration per-cell feature column (anchored id). Optional: a VDJ + annotations run has none.
+	if hasFeature {
+		bundleBuilder.addSingle(args.featureColumnId)
+	}
 	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
 	// aggregate template can count the matches and emit a clear error when the dataset has more than one
 	// clonotype grouping (VDJM-14) — addSingle would otherwise fail with the opaque backend message
@@ -67,6 +71,7 @@ wf.body(func(args) {
 		annotationDominanceThreshold: args.annotationDominanceThreshold,
 		presenceThreshold: args.presenceThreshold,
 		expressionMethod: args.expressionMethod,
+		hasFeature: hasFeature,
 		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})
@@ -75,10 +80,10 @@ wf.body(func(args) {
 		columns: columns,
 		featureNames: agg.output("featureNames"),
 		annotationValues: agg.output("annotationValues"),
-		propertiesFile: agg.output("propertiesFile"),
-		fractionsLongFile: agg.output("fractionsLongFile"),
-		fractionsWideFile: agg.output("fractionsWideFile"),
-		countsFile: agg.output("countsFile"),
+		propertiesFile: hasFeature ? agg.output("propertiesFile") : undefined,
+		fractionsLongFile: hasFeature ? agg.output("fractionsLongFile") : undefined,
+		fractionsWideFile: hasFeature ? agg.output("fractionsWideFile") : undefined,
+		countsFile: hasFeature ? agg.output("countsFile") : undefined,
 		expressionFile: hasGex ? agg.output("expressionFile") : undefined,
 		annotationFile: hasAnnotation ? agg.output("annotationFile") : undefined,
 		featureColumnId: args.featureColumnId,
@@ -87,6 +92,7 @@ wf.body(func(args) {
 		expressionMethod: args.expressionMethod,
 		customBlockLabel: args.customBlockLabel,
 		defaultBlockLabel: args.defaultBlockLabel,
+		hasFeature: hasFeature,
 		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})

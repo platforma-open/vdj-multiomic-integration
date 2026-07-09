@@ -24,28 +24,27 @@ self.awaitState("annotationValues", "ResourceReady")
 
 self.body(func(inputs) {
 	columns := inputs.columns
+	hasFeature := inputs.hasFeature
 	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
 
-	// Distinct antigen names present (sorted), read from the aggregation's feature-names output. Same
-	// set the wide-fractions CSV columns are named after (Python writes both from the same sorted list).
+	// Distinct antigen names present (empty when no feature integration): the per-antigen fraction columns
+	// and the dominant-antigen discreteValues are built from this.
 	featureNames := json.decode(string(inputs.featureNames.getData()))
 	// Distinct annotation values present (sorted), for the dominant-annotation column's discreteValues.
 	annotationValues := json.decode(string(inputs.annotationValues.getData()))
-
-	featureSpec := columns.getSpec(inputs.featureColumnId)
 
 	// scClonotypeKey axis reused verbatim from the resolved cell linker (single grouping guaranteed by
 	// the VDJM-14 guard in aggregate.tpl.tengo) so every emitted column joins the existing clonotype table.
 	linkerCol := columns.getColumns("linker")[0]
 	scAxis := linkerCol.spec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
-	featureAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
 
-	// Trace label = this instance's block label (user override, else the input-derived default), so two
-	// VDJM blocks stamp distinct labels and downstream Lead Selection can tell their columns apart. Falls
-	// back to the static block name for automated runs before the UI populates the default.
+	// Trace seed: the feature column's spec when a feature is integrated, else the linker (always present),
+	// so this block's trace step appends to a real upstream spec in every configuration. Label = this
+	// instance's block label, so two VDJM blocks stamp distinct downstream provenance.
+	traceSeed := hasFeature ? columns.getSpec(inputs.featureColumnId) : linkerCol.spec
 	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "VDJ Multiomic Integration"
-	trace := pSpec.makeTrace(featureSpec, {
+	trace := pSpec.makeTrace(traceSeed, {
 		type: "milaboratories.vdj-multiomic-integration",
 		id: inputs.blockId,
 		importance: 30,
@@ -78,6 +77,11 @@ self.body(func(inputs) {
 			addFn(k, trace.inject(v.spec), v.data)
 		}
 	}
+
+	// Feature (antigen) columns: emitted only when a feature integration is present.
+	if hasFeature {
+	featureSpec := columns.getSpec(inputs.featureColumnId)
+	featureAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
 
 	// per-clonotype properties: dominant antigen (categorical, A-0012) + restriction index / breadth
 	// (numerical scores). The dominant antigen carries discreteValues (the present antigens + "ambiguous")
@@ -178,6 +182,7 @@ self.body(func(inputs) {
 			})
 		}
 		importAndInject(inputs.fractionsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], perAntigenCols, addOwn)
+	}
 	}
 
 	// optional per-clonotype gene expression (clonotype x gene): mean/max across the clonotype's cells.
