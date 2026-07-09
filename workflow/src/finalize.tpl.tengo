@@ -20,6 +20,7 @@ json := import("json")
 
 self.awaitState("columns", "PColumnBundle")
 self.awaitState("featureNames", "ResourceReady")
+self.awaitState("annotationValues", "ResourceReady")
 
 self.body(func(inputs) {
 	columns := inputs.columns
@@ -29,6 +30,8 @@ self.body(func(inputs) {
 	// Distinct antigen names present (sorted), read from the aggregation's feature-names output. Same
 	// set the wide-fractions CSV columns are named after (Python writes both from the same sorted list).
 	featureNames := json.decode(string(inputs.featureNames.getData()))
+	// Distinct annotation values present (sorted), for the dominant-annotation column's discreteValues.
+	annotationValues := json.decode(string(inputs.annotationValues.getData()))
 
 	featureSpec := columns.getSpec(inputs.featureColumnId)
 
@@ -208,6 +211,7 @@ self.body(func(inputs) {
 				annotations: {
 					"pl7.app/label": "Dominant cell type",
 					"pl7.app/isDiscreteFilter": "true",
+					"pl7.app/discreteValues": string(json.encode(annotationValues + ["ambiguous"])),
 					"pl7.app/table/visibility": "default"
 				}
 			}
