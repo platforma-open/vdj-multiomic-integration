@@ -277,7 +277,7 @@ self.body(func(inputs) {
 	displayPf := fbDisplay.build()
 	exportPf := fbExport.build()
 
-	return {
+	result := {
 		// in-block table: own columns + borrowed identity, self-contained
 		clonotypeTable: pframes.exportFrame(displayPf),
 		// GraphMaker plot frame (own columns + identity for axis labels); resolved by this block's model
@@ -285,4 +285,29 @@ self.body(func(inputs) {
 		// result-pool export for downstream ranking/lead-selection: own columns ONLY (no borrowed identity)
 		clonotypeProperties: exportPf
 	}
+
+	// Composition frame: the small pre-aggregated (annotation, category) -> clonotype-count table for the
+	// Composition stacked bar. A separate frame (axes [annotation, category], NOT per-clonotype), so it
+	// stays tiny at any dataset size. Only built when an annotation is integrated.
+	if hasAnnotation {
+		annAxis := { type: "String", name: "pl7.app/rna-seq/annotationName", annotations: { "pl7.app/label": "Annotation" } }
+		catAxis := { type: "String", name: "pl7.app/rna-seq/annotationValue", annotations: { "pl7.app/label": "Category" } }
+		fbComp := pframes.pFrameBuilder()
+		addComp := func(k, spec, data) {
+			fbComp.add(k, spec, data)
+		}
+		importAndInject(inputs.compositionFile, [
+			{ column: "annotation", spec: annAxis },
+			{ column: "category", spec: catAxis }
+		], [{
+			column: "count", id: "clonotypeCount",
+			spec: {
+				name: "pl7.app/vdj/clonotypeCount", valueType: "Int",
+				annotations: { "pl7.app/label": "Clonotype count" }
+			}
+		}], addComp)
+		result.compositionTable = pframes.exportFrame(fbComp.build())
+	}
+
+	return result
 })

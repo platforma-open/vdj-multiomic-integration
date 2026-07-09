@@ -1,6 +1,7 @@
 import { platforma } from "@platforma-open/milaboratories.vdj-multiomic-integration.model";
 import { defineAppV3 } from "@platforma-sdk/ui-vue";
 import { watchEffect } from "vue";
+import CompositionPage from "./pages/CompositionPage.vue";
 import DistributionPage from "./pages/DistributionPage.vue";
 import HeatmapPage from "./pages/HeatmapPage.vue";
 import MainPage from "./pages/MainPage.vue";
@@ -30,6 +31,7 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
       "/": () => MainPage,
       "/heatmap": () => HeatmapPage,
       "/distribution": () => DistributionPage,
+      "/composition": () => CompositionPage,
     },
   };
 });

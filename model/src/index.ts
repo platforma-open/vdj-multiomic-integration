@@ -66,7 +66,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   // Property heatmap defaults to the clustered template with column mean-normalization — the view the
   // BEAM6 reference project settled on (feedback: "defaults set to what is currently set in BEAM6").
   heatmapState: {
-    title: "Property heatmap",
+    title: "Feature heatmap",
     template: "heatmapClustered" as const,
     currentTab: null,
     layersSettings: {
@@ -79,11 +79,23 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
     },
   },
   distributionState: {
-    title: "Distribution",
+    title: "Feature distribution",
     template: "bins" as const,
     currentTab: null,
     // Green bars to match the other views (default template fill would otherwise be white).
     layersSettings: { bins: { fillColor: "#99E099" } },
+  },
+  compositionState: {
+    title: "Annotation composition",
+    template: "bar" as const,
+    currentTab: null,
+    layersSettings: {},
+    axesSettings: {
+      other: {
+        facetSharedBy: "y" as const,
+        showLegend: false,
+      },
+    },
   },
 }));
 
@@ -245,6 +257,24 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("bindingPCols", (ctx) => graphCols(ctx, MATRIX_COLS))
   .outputWithStatus("distributionPf", (ctx) => graphPFrame(ctx, SCALAR_COLS))
   .output("distributionPCols", (ctx) => graphCols(ctx, SCALAR_COLS))
+  // Composition stacked bar: the pre-aggregated (annotation, category) -> clonotype-count frame, resolved
+  // from the workflow's separate compositionTable output (axes [annotation, category], NOT per-clonotype).
+  .outputWithStatus("compositionPf", (ctx) => {
+    try {
+      const cols = ctx.outputs?.resolve("compositionTable")?.getPColumns();
+      if (!cols || cols.length === 0) return undefined;
+      return ctx.createPFrame(cols);
+    } catch {
+      return undefined;
+    }
+  })
+  .output("compositionPCols", (ctx) => {
+    try {
+      return ctx.outputs?.resolve("compositionTable")?.getPColumns();
+    } catch {
+      return undefined;
+    }
+  })
   .title(() => "VDJ Multiomic Integration")
   // Subtitle = the block label: the user's override, else the input-derived default (the selected
   // dataset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
@@ -264,12 +294,34 @@ export const platforma = BlockModelV3.create(dataModel)
         return false;
       }
     })();
+    // Composition appears when an annotation has been integrated (its aggregated frame exists).
+    const hasComposition = (() => {
+      try {
+        const c = ctx.outputs?.resolve("compositionTable")?.getPColumns();
+        return !!c && c.length > 0;
+      } catch {
+        return false;
+      }
+    })();
     return [
       { type: "link" as const, href: "/" as const, label: "Main" },
       ...(hasProfile
         ? [
-            { type: "link" as const, href: "/heatmap" as const, label: "Property Heatmap" },
-            { type: "link" as const, href: "/distribution" as const, label: "Distribution" },
+            { type: "link" as const, href: "/heatmap" as const, label: "Feature Heatmap" },
+            {
+              type: "link" as const,
+              href: "/distribution" as const,
+              label: "Feature Distribution",
+            },
+          ]
+        : []),
+      ...(hasComposition
+        ? [
+            {
+              type: "link" as const,
+              href: "/composition" as const,
+              label: "Annotation Composition",
+            },
           ]
         : []),
     ];

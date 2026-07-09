@@ -64,4 +64,5 @@ export type BlockData = {
   // GraphMaker view state, one per plot page (UI-only, never projected to args).
   heatmapState: GraphMakerState; // clonotype x feature property heatmap
   distributionState: GraphMakerState; // restriction-index / breadth histogram
+  compositionState: GraphMakerState; // per-annotation composition stacked bar
 };

@@ -86,6 +86,7 @@ wf.body(func(args) {
 		countsFile: hasFeature ? agg.output("countsFile") : undefined,
 		expressionFile: hasGex ? agg.output("expressionFile") : undefined,
 		annotationsWideFile: hasAnnotation ? agg.output("annotationsWideFile") : undefined,
+		compositionFile: hasAnnotation ? agg.output("compositionFile") : undefined,
 		annotations: args.annotations,
 		featureColumnId: args.featureColumnId,
 		featureLabel: args.featureLabel,
@@ -99,15 +100,22 @@ wf.body(func(args) {
 		hasAnnotation: hasAnnotation
 	})
 
+	outputs := {
+		clonotypeTable: result.output("clonotypeTable"),
+		// raw per-clonotype PFrame (own columns + borrowed clonotype identity), surfaced to the model so
+		// it can build the GraphMaker frames (property heatmap + distribution histogram). This is
+		// the display frame — it carries the borrowed CDR3/V/J identity for axis labels but is NOT
+		// pool-published, so there is no cross-block collision.
+		propertiesPf: result.output("propertiesPf")
+	}
+	// small aggregated (annotation x category -> clonotype count) frame for the Composition stacked bar;
+	// only present when at least one annotation is integrated.
+	if hasAnnotation {
+		outputs.compositionTable = result.output("compositionTable")
+	}
+
 	return {
-		outputs: {
-			clonotypeTable: result.output("clonotypeTable"),
-			// raw per-clonotype PFrame (own columns + borrowed clonotype identity), surfaced to the model so
-			// it can build the GraphMaker frames (property heatmap + distribution histogram). This is
-			// the display frame — it carries the borrowed CDR3/V/J identity for axis labels but is NOT
-			// pool-published, so there is no cross-block collision.
-			propertiesPf: result.output("propertiesPf")
-		},
+		outputs: outputs,
 		exports: {
 			// own columns ONLY (no borrowed identity) — see the VDJM-24 note in finalize.tpl.tengo
 			clonotypeProperties: result.output("clonotypeProperties")
