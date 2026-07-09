@@ -368,6 +368,25 @@ def test_cli_annotation_null_values_excluded_from_dominance(tmp_path):
 
 
 @pytest.mark.slow
+def test_cli_numeric_annotation_labels_stay_strings(tmp_path):
+    # Leiden cluster ids ("0","1") look numeric; they must be treated as string categories, not coerced
+    # to Int, which would emit numeric discreteValues that no longer match the String dominant column
+    # (breaking the downstream Lead Selection filter).
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC")],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cC", "C2")],
+        annotation_rows=[("s1", "cA", "0"), ("s1", "cB", "0"), ("s1", "cC", "1")],
+    )
+    with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r["ann0"] for r in csv.DictReader(f)}
+    assert rows == {"C1": "0", "C2": "1"}
+    with open(tmp_path / "result_annotation_values.json") as f:
+        vals = json.load(f)["ann0"]
+    assert vals == ["0", "1"] and all(isinstance(v, str) for v in vals)  # strings, not ints
+
+
+@pytest.mark.slow
 def test_cli_multiple_annotations(tmp_path):
     # Two annotations folded independently -> one dominant column each (ann0, ann1) in the wide CSV, each
     # with its own distinct-values list. ann0 = cell type, ann1 = cluster.
