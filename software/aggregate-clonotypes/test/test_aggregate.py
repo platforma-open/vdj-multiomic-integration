@@ -32,7 +32,7 @@ _counts = st.lists(
 )
 
 
-# --- restriction index (spec A-0013; compartment_analysis.py:214) ---
+# --- restriction index (parity with compartment_analysis.py:214) ---
 
 
 def test_ri_single_feature_is_one():
@@ -56,7 +56,7 @@ def test_ri_no_signal_is_nan():
     assert math.isnan(restriction_index([0.0, 0.0]))
 
 
-# --- breadth (spec A-0013; compartment_analysis.py:387) ---
+# --- breadth (parity with compartment_analysis.py:387) ---
 
 
 def test_breadth_default_threshold_counts_nonzero():
@@ -68,7 +68,7 @@ def test_breadth_with_threshold():
     assert breadth([8.0, 2.0], presence_threshold=0.3) == 1
 
 
-# --- per-antigen presence cutoff (feedback: per-antigen threshold = presence/binding cutoff) ---
+# --- per-antigen presence cutoff (per-antigen threshold = presence/binding cutoff) ---
 
 
 def test_present_features_default_keeps_all_nonzero():
@@ -90,7 +90,7 @@ def test_present_features_no_signal_is_empty():
     assert present_features({"A": 0, "B": 0}, {}, 0.0) == {}
 
 
-# --- dominant category (spec A-0012, reused) ---
+# --- dominant category (reused) ---
 
 
 def test_dominant_winner():
@@ -134,7 +134,7 @@ def test_dominant_result_in_domain(counts, threshold):
     assert r is None or r == "ambiguous" or r in counts
 
 
-# --- parity vs the verbatim compartment_analysis.py reference (spec A-0013) ---
+# --- parity vs the verbatim compartment_analysis.py reference ---
 
 
 @given(_counts)
@@ -217,24 +217,26 @@ def _run_cli(
     *,
     gex_rows=None,
     annotation_rows=None,
+    annotations=None,
     expression_method=None,
     presence_threshold=None,
     presence_thresholds=None,
 ):
-    feats = tmp_path / "features.csv"
     linker = tmp_path / "linker.csv"
-    _write_csv(feats, ["sampleId", "cellId", "feature", "umiCount"], feature_rows)
     _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
     cmd = [
         sys.executable,
         str(SRC),
-        "--feature-csv",
-        str(feats),
         "--linker-csv",
         str(linker),
         "--output-prefix",
         str(tmp_path / "result"),
     ]
+    # feature is optional: pass feature_rows=None for a VDJ + annotations-only run
+    if feature_rows is not None:
+        feats = tmp_path / "features.csv"
+        _write_csv(feats, ["sampleId", "cellId", "feature", "umiCount"], feature_rows)
+        cmd += ["--feature-csv", str(feats)]
     if presence_threshold is not None:
         cmd += ["--presence-threshold", str(presence_threshold)]
     if presence_thresholds is not None:
@@ -245,10 +247,18 @@ def _run_cli(
         cmd += ["--gex-csv", str(gex)]
         if expression_method is not None:
             cmd += ["--expression-method", expression_method]
-    if annotation_rows is not None:
-        ann = tmp_path / "annotation.csv"
-        _write_csv(ann, ["sampleId", "cellId", "cellType"], annotation_rows)
-        cmd += ["--annotation-csv", str(ann)]
+    # annotation manifest: `annotations` (list of (rows, dominance)) takes precedence; else the single
+    # `annotation_rows` maps to one entry at dominance 0.6.
+    ann_entries = (
+        annotations if annotations is not None else ([(annotation_rows, 0.6)] if annotation_rows is not None else [])
+    )
+    if ann_entries:
+        manifest = []
+        for i, (rows, dom) in enumerate(ann_entries):
+            ann = tmp_path / f"annotation_{i}.csv"
+            _write_csv(ann, ["sampleId", "cellId", "value"], rows)
+            manifest.append({"csv": str(ann), "key": f"ann{i}", "label": f"ann{i}", "dominance": dom})
+        cmd += ["--annotations", json.dumps(manifest)]
     subprocess.run(
         cmd,
         check=True,  # a mid-run crash surfaces as CalledProcessError -> test failure
@@ -279,7 +289,7 @@ def test_cli_disjoint_join_emits_empty_not_crash(tmp_path):
 @pytest.mark.slow
 def test_cli_all_zero_counts_are_dropped_no_nan(tmp_path):
     # A clonotype whose only feature rows are all-zero UMI has no antigen signal: it must be dropped
-    # (sparse, DP-4), never emit a 0/0=NaN fraction or a null-dtype dominant column.
+    # (sparse), never emit a 0/0=NaN fraction or a null-dtype dominant column.
     _run_cli(
         tmp_path,
         feature_rows=[
@@ -297,14 +307,14 @@ def test_cli_all_zero_counts_are_dropped_no_nan(tmp_path):
     assert keys == {"C2"}  # C1 (all-zero) dropped; C2 retained
 
 
-# --- optional annotation branch: dominant cell type per clonotype (spec A-0020, dominant-category rule) ---
+# --- optional annotation branch: dominant cell type per clonotype (dominant-category rule) ---
 
 
 @pytest.mark.slow
 def test_cli_annotation_dominant_cell_type(tmp_path):
     # C1: 2x Tcell + 1x Bcell -> 2/3 = 0.67 >= 0.6 threshold -> Tcell.
     # C2: 1x Tcell -> 1.0 -> Tcell.
-    # C3: 1x Tcell + 1x Bcell -> tied at the 0.5 floor, two winners -> "ambiguous" (spec A-0012).
+    # C3: 1x Tcell + 1x Bcell -> tied at the 0.5 floor, two winners -> "ambiguous".
     _run_cli(
         tmp_path,
         feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC", "cD", "cE", "cF")],
@@ -325,12 +335,90 @@ def test_cli_annotation_dominant_cell_type(tmp_path):
             ("s1", "cF", "Bcell"),
         ],
     )
-    with open(tmp_path / "result_annotation.csv", newline="") as f:
-        rows = {r["scClonotypeKey"]: r["dominantCellType"] for r in csv.DictReader(f)}
+    with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r["ann0"] for r in csv.DictReader(f)}
     assert rows == {"C1": "Tcell", "C2": "Tcell", "C3": "ambiguous"}
 
 
-# --- optional GEX branch: per-(clonotype, gene) mean/max expression (spec A-0019) ---
+@pytest.mark.slow
+def test_cli_annotation_null_values_excluded_from_dominance(tmp_path):
+    # Cells with a null annotation value must not count as a competing category. Without dropping them,
+    # C1 = {Tcell: 2, null: 2} ties and reads "ambiguous"; dropping nulls leaves {Tcell: 2} -> "Tcell".
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC", "cD")],
+        linker_rows=[
+            ("s1", "cA", "C1"),
+            ("s1", "cB", "C1"),
+            ("s1", "cC", "C1"),
+            ("s1", "cD", "C1"),
+        ],
+        annotation_rows=[
+            ("s1", "cA", "Tcell"),
+            ("s1", "cB", "Tcell"),
+            ("s1", "cC", None),
+            ("s1", "cD", None),
+        ],
+    )
+    with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r["ann0"] for r in csv.DictReader(f)}
+    assert rows == {"C1": "Tcell"}
+    with open(tmp_path / "result_annotation_values.json") as f:
+        assert json.load(f)["ann0"] == ["Tcell"]  # null is not a category
+
+
+@pytest.mark.slow
+def test_cli_multiple_annotations(tmp_path):
+    # Two annotations folded independently -> one dominant column each (ann0, ann1) in the wide CSV, each
+    # with its own distinct-values list. ann0 = cell type, ann1 = cluster.
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", c, "AGX", 5) for c in ("cA", "cB", "cC")],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cC", "C2")],
+        annotations=[
+            # ann0 cell type: C1 = 2x Tcell -> Tcell; C2 = 1x Bcell -> Bcell.
+            ([("s1", "cA", "Tcell"), ("s1", "cB", "Tcell"), ("s1", "cC", "Bcell")], 0.6),
+            # ann1 cluster: C1 = CL0 + CL1 tied at 0.5 floor -> ambiguous; C2 = CL2 -> CL2.
+            ([("s1", "cA", "CL0"), ("s1", "cB", "CL1"), ("s1", "cC", "CL2")], 0.6),
+        ],
+    )
+    with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: (r["ann0"], r["ann1"]) for r in csv.DictReader(f)}
+    assert rows["C1"] == ("Tcell", "ambiguous")
+    assert rows["C2"] == ("Bcell", "CL2")
+    with open(tmp_path / "result_annotation_values.json") as f:
+        vals = json.load(f)
+    assert set(vals["ann0"]) == {"Tcell", "Bcell"}
+    assert set(vals["ann1"]) == {"CL0", "CL1", "CL2"}
+    # pre-aggregated composition: clonotype count per (annotation, dominant category)
+    with open(tmp_path / "result_composition.csv", newline="") as f:
+        comp = {(r["annotation"], r["category"]): int(r["count"]) for r in csv.DictReader(f)}
+    assert comp == {
+        ("ann0", "Tcell"): 1,
+        ("ann0", "Bcell"): 1,
+        ("ann1", "ambiguous"): 1,
+        ("ann1", "CL2"): 1,
+    }
+
+
+@pytest.mark.slow
+def test_cli_no_feature_annotation_only(tmp_path):
+    # VDJ + annotations only (no feature integration): the run succeeds, emits the annotation output, and
+    # does NOT write the feature matrices / properties CSVs.
+    _run_cli(
+        tmp_path,
+        feature_rows=None,
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1")],
+        annotation_rows=[("s1", "cA", "Tcell"), ("s1", "cB", "Tcell")],
+    )
+    with open(tmp_path / "result_annotations_wide.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r["ann0"] for r in csv.DictReader(f)}
+    assert rows == {"C1": "Tcell"}
+    assert not (tmp_path / "result_properties.csv").exists()
+    assert not (tmp_path / "result_fractions.csv").exists()
+
+
+# --- optional GEX branch: per-(clonotype, gene) mean/max expression ---
 # NB these pin an intentional semantic: the mean is over the cells that CARRY a count for the gene
 # (a sparse count matrix), not over every cell in the clonotype. C1/geneY below = mean(2) = 2.0, NOT
 # mean(2, 0) = 1.0 — geneY has no row for cB, and no zero is imputed.
@@ -374,7 +462,7 @@ def test_cli_gex_max_expression(tmp_path):
     assert rows == {("C1", "geneX"): 8.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
 
 
-# --- per-antigen fraction columns + feature-names output (feedback: one fraction pcolumn per antigen) ---
+# --- per-antigen fraction columns + feature-names output (one fraction pcolumn per antigen) ---
 
 
 @pytest.mark.slow
