@@ -1,0 +1,124 @@
+// VDJ Multiomic Integration — top-level workflow.
+//
+// Resolves the input bundle (the VDJ dataset anchor, the Feature Integration per-cell column, the
+// dataset's cell linker resolved by spec, and the optional GEX / annotation columns) and delegates
+// the per-clonotype aggregation to an ephemeral template that awaits the bundle's data. The linker
+// is resolved here by selector under the anchor — the model does not pass a linker id (its args
+// lambda has no ctx).
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+
+aggregateTpl := assets.importTemplate(":aggregate")
+finalizeTpl := assets.importTemplate(":finalize")
+
+wf.body(func(args) {
+	hasFeature := args.featureColumnId != undefined
+	bundleBuilder := wf.createPBundleBuilder()
+	bundleBuilder.ignoreMissingDomains() // robust matching of the VDJ dataset's per-clonotype property columns
+	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
+	// Feature Integration per-cell feature column (anchored id). Optional: a VDJ + annotations run has none.
+	if hasFeature {
+		bundleBuilder.addSingle(args.featureColumnId)
+	}
+	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
+	// aggregate template can count the matches and emit a clear error when the dataset has more than one
+	// clonotype grouping — addSingle would otherwise fail with the opaque backend message
+	// "expected single element, got N". The aggregate requires exactly one linker.
+	bundleBuilder.addMulti({ name: "pl7.app/sc/cellLinker" }, "linker")
+
+	// Readable clonotype identity for the results table, resolved from the VDJ dataset (import-vdj-data)
+	// under the anchor's scClonotypeKey axis (idx 1). The label column (pl7.app/label -> "C-XXXXX")
+	// relabels the otherwise-opaque scClonotypeKey axis; the primary heavy/light CDR3 aa + V/J genes give
+	// the biological identity. All are keyed on scClonotypeKey alone, so they join the flat per-clonotype
+	// table. They are injected into the results frame in the finalize template (keeps the table
+	// self-contained; no discovery / maxHops change in the model).
+	bundleBuilder.addSingle({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/label" }, "clonotypeLabel")
+	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/sequence", domain: { "pl7.app/vdj/feature": "CDR3", "pl7.app/alphabet": "aminoacid", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "cdr3aa")
+	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/geneHit", domain: { "pl7.app/vdj/reference": "VGene", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "vGene")
+	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/geneHit", domain: { "pl7.app/vdj/reference": "JGene", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "jGene")
+
+	if args.gexColumnId != undefined {
+		bundleBuilder.addSingle(args.gexColumnId)
+	}
+	// every annotation-kind integration (0..N), each folded on independently
+	for ann in args.annotations {
+		bundleBuilder.addSingle(ann.ref)
+	}
+
+	columns := bundleBuilder.build()
+
+	// this block's instance id — stamped as the id of VDJM's own trace step (provenance) so each VDJM
+	// instance's lineage is distinguishable; see makeTrace in finalize.tpl.tengo.
+	blockId := wf.blockId().getDataAsJson()
+
+	hasGex := args.gexColumnId != undefined
+	hasAnnotation := len(args.annotations) > 0
+
+	// Two ephemeral (not pure) steps. `aggregate` runs the Python (deterministic — it sorts every output)
+	// and returns the result files; `finalize` awaits the feature-names value + the bundle and builds
+	// every emitted column. Both take the SAME unresolved bundle reference (finalize cannot receive it
+	// from aggregate — aggregate holds it resolved, with methods, which is not serializable). Ephemeral,
+	// not pure: safe cross-project dedup of the 16 GiB step is deferred to v1.1 (needs the exported columns
+	// content-addressed via pl7.app/contentTag, verified against the SDK); a
+	// subtly non-canonical pure template would ship silent wrong cache hits.
+	agg := render.createEphemeral(aggregateTpl, {
+		columns: columns,
+		blockId: blockId,
+		featureColumnId: args.featureColumnId,
+		gexColumnId: args.gexColumnId,
+		annotations: args.annotations,
+		featureDominanceThreshold: args.featureDominanceThreshold,
+		presenceThreshold: args.presenceThreshold,
+		expressionMethod: args.expressionMethod,
+		hasFeature: hasFeature,
+		hasGex: hasGex,
+		hasAnnotation: hasAnnotation
+	})
+
+	result := render.createEphemeral(finalizeTpl, {
+		columns: columns,
+		featureNames: agg.output("featureNames"),
+		annotationValues: agg.output("annotationValues"),
+		propertiesFile: hasFeature ? agg.output("propertiesFile") : undefined,
+		fractionsLongFile: hasFeature ? agg.output("fractionsLongFile") : undefined,
+		fractionsWideFile: hasFeature ? agg.output("fractionsWideFile") : undefined,
+		countsFile: hasFeature ? agg.output("countsFile") : undefined,
+		expressionFile: hasGex ? agg.output("expressionFile") : undefined,
+		annotationsWideFile: hasAnnotation ? agg.output("annotationsWideFile") : undefined,
+		compositionFile: hasAnnotation ? agg.output("compositionFile") : undefined,
+		annotations: args.annotations,
+		featureColumnId: args.featureColumnId,
+		featureLabel: args.featureLabel,
+		gexColumnId: args.gexColumnId,
+		blockId: blockId,
+		expressionMethod: args.expressionMethod,
+		customBlockLabel: args.customBlockLabel,
+		defaultBlockLabel: args.defaultBlockLabel,
+		hasFeature: hasFeature,
+		hasGex: hasGex,
+		hasAnnotation: hasAnnotation
+	})
+
+	outputs := {
+		clonotypeTable: result.output("clonotypeTable"),
+		// raw per-clonotype PFrame (own columns + borrowed clonotype identity), surfaced to the model so
+		// it can build the GraphMaker frames (property heatmap + distribution histogram). This is
+		// the display frame — it carries the borrowed CDR3/V/J identity for axis labels but is NOT
+		// pool-published, so there is no cross-block collision.
+		propertiesPf: result.output("propertiesPf")
+	}
+	// small aggregated (annotation x category -> clonotype count) frame for the Composition stacked bar;
+	// only present when at least one annotation is integrated.
+	if hasAnnotation {
+		outputs.compositionTable = result.output("compositionTable")
+	}
+
+	return {
+		outputs: outputs,
+		exports: {
+			// own columns ONLY (no borrowed identity) — see the note in finalize.tpl.tengo
+			clonotypeProperties: result.output("clonotypeProperties")
+		}
+	}
+})
