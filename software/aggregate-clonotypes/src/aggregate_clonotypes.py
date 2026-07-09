@@ -236,12 +236,17 @@ def main() -> None:
     # each input CSV is "value" (generic across cell type, cluster id, or any categorical annotation).
     annotation_manifest = json.loads(args.annotations) if args.annotations else []
     annotation_values: dict[str, list[str]] = {}
+    # Composition rows (annotation label, dominant category, clonotype count) — the aggregated table the
+    # Composition stacked bar plots. Pre-aggregated here (not per clonotype) so it stays tiny regardless of
+    # dataset size: at most #annotations x #categories rows.
+    composition_rows: list[dict] = []
     if annotation_manifest:
         # base of every clonotype so an annotation missing for a clonotype yields null (spec A-0020)
         wide_ann = linker.select("scClonotypeKey").unique()
         for entry in annotation_manifest:
             key = entry["key"]
             dom = entry["dominance"]
+            label = entry["label"]
             ann = pl.read_csv(entry["csv"]).join(linker, on=["sampleId", "cellId"], how="inner")
             annotation_values[key] = sorted(v for v in ann["value"].unique().to_list() if v is not None)
             rows = []
@@ -251,12 +256,24 @@ def main() -> None:
                 rows.append({"scClonotypeKey": clono, key: dominant_category(d, dom)})
             df = pl.DataFrame(rows, schema={"scClonotypeKey": pl.String, key: pl.String})
             wide_ann = wide_ann.join(df, on="scClonotypeKey", how="left")
+            # clonotype count per dominant category (drop null = clonotypes with no cells for this annotation)
+            comp = df.filter(pl.col(key).is_not_null()).group_by(key).agg(pl.len().alias("count"))
+            for cat, n in zip(comp[key].to_list(), comp["count"].to_list()):
+                composition_rows.append({"annotation": label, "category": cat, "count": n})
         wide_ann.sort("scClonotypeKey").write_csv(f"{args.output_prefix}_annotations_wide.csv")
 
     # {key: distinct annotation values} for the per-annotation dominant column discreteValues (downstream
     # multi-select). Empty map when no annotation is integrated.
     with open(f"{args.output_prefix}_annotation_values.json", "w") as f:
         json.dump(annotation_values, f)
+
+    # composition-count table for the Composition stacked bar (one row per annotation x category). Empty
+    # (header-only) when no annotation is integrated.
+    comp_schema = {"annotation": pl.String, "category": pl.String, "count": pl.Int64}
+    comp_df = (
+        pl.DataFrame(composition_rows, schema=comp_schema) if composition_rows else pl.DataFrame(schema=comp_schema)
+    )
+    comp_df.sort(["annotation", "category"]).write_csv(f"{args.output_prefix}_composition.csv")
 
 
 if __name__ == "__main__":

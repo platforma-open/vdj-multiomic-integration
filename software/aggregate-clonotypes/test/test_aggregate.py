@@ -257,7 +257,7 @@ def _run_cli(
         for i, (rows, dom) in enumerate(ann_entries):
             ann = tmp_path / f"annotation_{i}.csv"
             _write_csv(ann, ["sampleId", "cellId", "value"], rows)
-            manifest.append({"csv": str(ann), "key": f"ann{i}", "dominance": dom})
+            manifest.append({"csv": str(ann), "key": f"ann{i}", "label": f"ann{i}", "dominance": dom})
         cmd += ["--annotations", json.dumps(manifest)]
     subprocess.run(
         cmd,
@@ -363,6 +363,15 @@ def test_cli_multiple_annotations(tmp_path):
         vals = json.load(f)
     assert set(vals["ann0"]) == {"Tcell", "Bcell"}
     assert set(vals["ann1"]) == {"CL0", "CL1", "CL2"}
+    # pre-aggregated composition: clonotype count per (annotation, dominant category)
+    with open(tmp_path / "result_composition.csv", newline="") as f:
+        comp = {(r["annotation"], r["category"]): int(r["count"]) for r in csv.DictReader(f)}
+    assert comp == {
+        ("ann0", "Tcell"): 1,
+        ("ann0", "Bcell"): 1,
+        ("ann1", "ambiguous"): 1,
+        ("ann1", "CL2"): 1,
+    }
 
 
 @pytest.mark.slow

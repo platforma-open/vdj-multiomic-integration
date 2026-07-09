@@ -18,7 +18,7 @@ import {
   PlSlideModal,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 
 const app = useApp();
@@ -26,6 +26,14 @@ const app = useApp();
 // Auto-open Settings when the block is first added and the dataset is unset. Local ref initialised from
 // data — never a watcher writing back to data (would be a hairpin).
 const settingsOpen = ref(app.model.data.datasetRef === undefined);
+
+// Close Settings once the run starts, so the results take over the page.
+watch(
+  () => app.model.outputs.isRunning,
+  (isRunning) => {
+    if (isRunning) settingsOpen.value = false;
+  },
+);
 
 // The dataset is the anchor only (clonotype space + cell linker). Per-cell inputs are chosen explicitly
 // as integration cards below, so picking the dataset writes only the ref (and resets the grid state).

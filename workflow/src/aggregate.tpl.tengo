@@ -110,7 +110,7 @@ self.body(func(inputs) {
 			csvName := "annotation_" + string(i) + ".csv"
 			annCsvFile := buildCellCsv(columns.getColumn(ann.ref), "value", ["sampleId", "cellId"])
 			run = run.addFile(csvName, annCsvFile)
-			annManifest = append(annManifest, { csv: csvName, key: "ann" + string(i), dominance: ann.dominanceThreshold })
+			annManifest = append(annManifest, { csv: csvName, key: "ann" + string(i), label: ann.label, dominance: ann.dominanceThreshold })
 		}
 		run = run.arg("--annotations").arg(string(json.encode(annManifest)))
 	}
@@ -134,7 +134,9 @@ self.body(func(inputs) {
 		run = run.saveFile("result_expression.csv")
 	}
 	if hasAnnotation {
-		run = run.saveFile("result_annotations_wide.csv")
+		run = run.
+			saveFile("result_annotations_wide.csv").
+			saveFile("result_composition.csv")
 	}
 	run = run.run()
 
@@ -157,6 +159,7 @@ self.body(func(inputs) {
 	}
 	if hasAnnotation {
 		result.annotationsWideFile = run.getFile("result_annotations_wide.csv")
+		result.compositionFile = run.getFile("result_composition.csv")
 	}
 	return result
 })
