@@ -1,0 +1,165 @@
+// Per-clonotype aggregation (ephemeral). Awaits the PColumnBundle (specs first, data when ready),
+// materializes the per-cell inputs + the cell linker to CSVs, runs aggregate_clonotypes.py, and returns
+// the run's output files. The `finalize` template (rendered by main.tpl.tengo alongside this one) then
+// awaits the feature-names value + the bundle and builds the per-clonotype p-columns — see
+// finalize.tpl.tengo for why the split is required.
+//
+// This template must NOT render finalize itself: it holds the bundle in its *resolved* form (a strict
+// map with methods, from awaitState), which cannot be serialized as a template input. main.tpl passes
+// the *unresolved* bundle reference to finalize instead.
+//
+// SCOPE here: resolve the bundle, guard the single-grouping requirement, build the input
+// CSVs, and run the Python. All column-spec construction (dominant antigen + discreteValues, the
+// per-antigen fraction columns, RI/breadth, the matrices, optional GEX/annotation, borrowed identity)
+// lives in finalize.tpl.tengo.
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+json := import("json")
+
+aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
+
+self.awaitState("columns", "PColumnBundle")
+
+self.body(func(inputs) {
+	columns := inputs.columns
+	hasGex := inputs.hasGex
+	hasAnnotation := inputs.hasAnnotation
+
+	// Cell-linker resolution + grouping guard. The linker is resolved as a MULTI query in
+	// main.tpl.tengo; v1 aggregates over a single clonotype grouping, so require exactly one linker.
+	// More than one means the VDJ dataset carries multiple groupings (V(D)J imported with multiple chain
+	// sets) — fail with an actionable message instead of the opaque backend "expected single element".
+	linkerCols := columns.getColumns("linker")
+	if len(linkerCols) == 0 {
+		ll.panic("VDJ Multiomic Integration: the selected dataset has no cell linker. Choose a single-cell VDJ dataset produced by the Import V(D)J Data block.")
+	}
+	if len(linkerCols) > 1 {
+		ll.panic("VDJ Multiomic Integration v1 supports a single clonotype grouping, but the selected VDJ dataset has %d cell linkers. Importing V(D)J data with multiple chain sets produces one grouping per set — re-import V(D)J Data with a single chain set (e.g. IGHeavy + IGLight), or run one grouping at a time.", len(linkerCols))
+	}
+	linkerCol := linkerCols[0]
+
+	// A per-cell column -> flat CSV: value column under `valueHeader`, each axis renamed by position
+	// to the header the Python expects. Same mem/cpu budget for every cell CSV.
+	buildCellCsv := func(colEntry, valueHeader, axisHeaders) {
+		b := pframes.csvFileBuilder()
+		b.add(colEntry, { header: valueHeader })
+		for i, h in axisHeaders {
+			b.setAxisHeader(colEntry.spec.axesSpec[i].name, h)
+		}
+		b.mem("8GiB")
+		b.cpu(1)
+		return b.build()
+	}
+
+	hasFeature := inputs.featureColumnId != undefined
+
+	// cellLinker -> CSV (sampleId, cellId, scClonotypeKey); the linker value column is unused by the Python.
+	// Strip the isLinkerColumn marker before export: as a linker, csvFileBuilder/ptabler build a
+	// linker_index that requires exactly 2 connected components and reject this 3-axis cell linker
+	// [sampleId, cellId, scClonotypeKey]. We only need the axis tuple as flat rows, so export it as a
+	// plain column (same Parquet data, just not flagged as a linker).
+	linkerAnnotations := {}
+	for k, v in linkerCol.spec.annotations {
+		if k != "pl7.app/isLinkerColumn" {
+			linkerAnnotations[k] = v
+		}
+	}
+	linkerSpecPlain := {}
+	for k, v in linkerCol.spec {
+		linkerSpecPlain[k] = v
+	}
+	linkerSpecPlain.annotations = linkerAnnotations
+	linkerCsvFile := buildCellCsv({ spec: linkerSpecPlain, data: linkerCol.data }, "linker", ["sampleId", "cellId", "scClonotypeKey"])
+
+	run := exec.builder().
+		software(aggSw).
+		mem("16GiB").
+		cpu(4).
+		addFile("linker.csv", linkerCsvFile).
+		arg("--linker-csv").arg("linker.csv").
+		arg("--output-prefix").arg("result")
+
+	// feature column -> CSV (sampleId, cellId, feature, umiCount) + its thresholds. Optional: skipped for a
+	// VDJ + annotations run with no feature integration.
+	if hasFeature {
+		featCsvFile := buildCellCsv(columns.getColumn(inputs.featureColumnId), "umiCount", ["sampleId", "cellId", "feature"])
+		run = run.addFile("features.csv", featCsvFile).
+			arg("--feature-csv").arg("features.csv").
+			arg("--dominance-threshold-feature").arg(string(inputs.featureDominanceThreshold))
+		// presence cutoff (within-clonotype fraction) applied to every feature; feeds breadth + the dominant call.
+		if inputs.presenceThreshold != undefined {
+			run = run.arg("--presence-threshold").arg(string(inputs.presenceThreshold))
+		}
+	}
+
+	if hasGex {
+		gexCsvFile := buildCellCsv(columns.getColumn(inputs.gexColumnId), "count", ["sampleId", "cellId", "geneId"])
+		run = run.addFile("gex.csv", gexCsvFile).
+			arg("--gex-csv").arg("gex.csv").
+			arg("--expression-method").arg(inputs.expressionMethod)
+	}
+
+	// annotations (0..N): one per-cell CSV each + a JSON manifest {csv, key, dominance} the Python loops
+	// over, so every annotation is folded on independently (not just the first).
+	if hasAnnotation {
+		annManifest := []
+		for i, ann in inputs.annotations {
+			csvName := "annotation_" + string(i) + ".csv"
+			annCsvFile := buildCellCsv(columns.getColumn(ann.ref), "value", ["sampleId", "cellId"])
+			run = run.addFile(csvName, annCsvFile)
+			annManifest = append(annManifest, { csv: csvName, key: "ann" + string(i), label: ann.label, dominance: ann.dominanceThreshold })
+		}
+		run = run.arg("--annotations").arg(string(json.encode(annManifest)))
+	}
+
+	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
+	// wide) + UMI count matrices, the feature-names list (as content, read in finalize), and — when
+	// selected — the GEX / annotation CSVs.
+	// feature-names + annotation-values are always emitted (empty when the corresponding input is absent);
+	// the feature matrices / properties CSVs only when a feature is integrated.
+	run = run.
+		saveFileContent("result_feature_names.json").
+		saveFileContent("result_annotation_values.json")
+	if hasFeature {
+		run = run.
+			saveFile("result_properties.csv").
+			saveFile("result_fractions.csv").
+			saveFile("result_fractions_wide.csv").
+			saveFile("result_counts.csv")
+	}
+	if hasGex {
+		run = run.saveFile("result_expression.csv")
+	}
+	if hasAnnotation {
+		run = run.
+			saveFile("result_annotations_wide.csv").
+			saveFile("result_composition.csv")
+	}
+	run = run.run()
+
+	// Return the run's output files (resources). main.tpl.tengo forwards these to finalize together with
+	// the unresolved bundle. featureNames is content (read as a value in finalize); the rest are files
+	// consumed by xsv.importFile there. The GEX / annotation files are added only when those inputs are
+	// present: a template output field cannot be assigned undefined.
+	result := {
+		featureNames: run.getFileContent("result_feature_names.json"),
+		annotationValues: run.getFileContent("result_annotation_values.json")
+	}
+	if hasFeature {
+		result.propertiesFile = run.getFile("result_properties.csv")
+		result.fractionsLongFile = run.getFile("result_fractions.csv")
+		result.fractionsWideFile = run.getFile("result_fractions_wide.csv")
+		result.countsFile = run.getFile("result_counts.csv")
+	}
+	if hasGex {
+		result.expressionFile = run.getFile("result_expression.csv")
+	}
+	if hasAnnotation {
+		result.annotationsWideFile = run.getFile("result_annotations_wide.csv")
+		result.compositionFile = run.getFile("result_composition.csv")
+	}
+	return result
+})

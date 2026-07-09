@@ -1,0 +1,313 @@
+// Per-clonotype column assembly (ephemeral). Split out of aggregate.tpl.tengo so it can AWAIT the
+// aggregation's feature-names output — the distinct antigens present — as a VALUE, and use it to
+//   (1) build one per-antigen within-clonotype fraction p-column per antigen, and
+//   (2) populate the dominant-antigen column's discreteValues,
+// so downstream Lead Selection offers the dominant antigen as a multi-select filter and each antigen's
+// fraction as its own per-clonotype numeric filter. Reading a tool output value inline requires a
+// template boundary (workflow.md "split to wait on data"); this is that child. The mechanism mirrors
+// immune-assay-data's build-outputs (awaitState ResourceReady on a derived value, then build specs).
+//
+// The parent (aggregate.tpl.tengo) resolves the bundle, runs the Python, and forwards the run's output
+// files + the feature-names content + the bundle here. This template owns the whole import + frame
+// build; the parent only produces the CSVs.
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+canonical := import("@platforma-sdk/workflow-tengo:canonical") // deterministic key-sorted JSON, for content-stable column keys
+strings := import("@platforma-sdk/workflow-tengo:strings")
+json := import("json")
+
+self.awaitState("columns", "PColumnBundle")
+self.awaitState("featureNames", "ResourceReady")
+self.awaitState("annotationValues", "ResourceReady")
+
+self.body(func(inputs) {
+	columns := inputs.columns
+	hasFeature := inputs.hasFeature
+	hasGex := inputs.hasGex
+	hasAnnotation := inputs.hasAnnotation
+
+	// Distinct antigen names present (empty when no feature integration): the per-antigen fraction columns
+	// and the dominant-antigen discreteValues are built from this.
+	featureNames := json.decode(string(inputs.featureNames.getData()))
+	// Distinct annotation values as a { key: [values] } map (key = "ann0", "ann1", ...), for each
+	// dominant-annotation column's discreteValues. Empty map when no annotation is integrated.
+	annotationValues := json.decode(string(inputs.annotationValues.getData()))
+
+	// scClonotypeKey axis reused verbatim from the resolved cell linker (single grouping guaranteed by
+	// the single-grouping guard in aggregate.tpl.tengo) so every emitted column joins the existing clonotype table.
+	linkerCol := columns.getColumns("linker")[0]
+	scAxis := linkerCol.spec.axesSpec[2] // pl7.app/vdj/scClonotypeKey
+
+	// Trace seed: the feature column's spec when a feature is integrated, else the linker (always present),
+	// so this block's trace step appends to a real upstream spec in every configuration. Label = this
+	// instance's block label, so two VDJM blocks stamp distinct downstream provenance.
+	traceSeed := hasFeature ? columns.getSpec(inputs.featureColumnId) : linkerCol.spec
+	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "VDJ Multiomic Integration"
+	trace := pSpec.makeTrace(traceSeed, {
+		type: "milaboratories.vdj-multiomic-integration",
+		id: inputs.blockId,
+		importance: 30,
+		label: traceLabel
+	})
+
+	// Two frames: displayPf = own columns + borrowed VDJ identity (feeds the in-block table +
+	// GraphMaker frames; NOT pool-published, so the borrowed identity causes no cross-block collision);
+	// exportPf = own columns ONLY (published as clonotypeProperties for downstream Lead Selection). The
+	// borrowed identity columns must NOT be re-exported — they already live in the pool under the same
+	// scClonotypeKey axis from import-vdj-data.
+	fbDisplay := pframes.pFrameBuilder()
+	fbExport := pframes.pFrameBuilder()
+	addOwn := func(k, spec, data) {
+		fbDisplay.add(k, spec, data)
+		fbExport.add(k, spec, data)
+	}
+	addDisplayOnly := func(k, spec, data) {
+		fbDisplay.add(k, spec, data)
+	}
+	// import a result CSV and inject its columns via addFn (addOwn = both frames; addDisplayOnly = display).
+	importAndInject := func(file, importAxes, importColumns, addFn) {
+		rawPf := xsv.importFile(file, "csv", {
+			axes: importAxes,
+			columns: importColumns,
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		}, { splitDataAndSpec: true })
+		for k, v in rawPf {
+			addFn(k, trace.inject(v.spec), v.data)
+		}
+	}
+
+	// Feature (antigen) columns: emitted only when a feature integration is present.
+	if hasFeature {
+	featureSpec := columns.getSpec(inputs.featureColumnId)
+	featureAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
+
+	// per-clonotype properties: dominant antigen (categorical) + restriction index / breadth
+	// (numerical scores). The dominant antigen carries discreteValues (the present antigens + "ambiguous")
+	// on top of isDiscreteFilter — Lead Selection's FilterCard requires BOTH to render a multi-select.
+	// Attribute the feature metrics to their source integration (e.g. "Antigens · Restriction index"), and
+	// order the antigen group together via orderPriority: dominant antigen, then restriction index, breadth.
+	featPrefix := inputs.featureLabel || "Antigens"
+	dominantValues := featureNames + ["ambiguous"]
+	importAndInject(inputs.propertiesFile, [{ column: "scClonotypeKey", spec: scAxis }], [
+		{
+			column: "dominantFeature", id: "dom",
+			spec: {
+				name: "pl7.app/feature/dominantFeature", valueType: "String",
+				annotations: {
+					"pl7.app/label": featPrefix + " · Dominant feature",
+					"pl7.app/isDiscreteFilter": "true",
+					"pl7.app/discreteValues": string(json.encode(dominantValues)),
+					"pl7.app/table/visibility": "default",
+					"pl7.app/table/orderPriority": "100"
+				}
+			}
+		},
+		{
+			column: "restrictionIndex", id: "ri",
+			spec: {
+				name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
+				annotations: {
+					"pl7.app/label": featPrefix + " · Restriction index",
+					"pl7.app/format": ".3f",
+					"pl7.app/table/visibility": "default",
+					"pl7.app/table/orderPriority": "110",
+					"pl7.app/isScore": "true",
+					"pl7.app/score/rankingOrder": "decreasing"
+				}
+			}
+		},
+		{
+			column: "breadth", id: "breadth",
+			spec: {
+				name: "pl7.app/vdj/breadth", valueType: "Int",
+				annotations: {
+					"pl7.app/label": featPrefix + " · Breadth",
+					"pl7.app/table/visibility": "optional",
+					"pl7.app/table/orderPriority": "120",
+					"pl7.app/isScore": "true",
+					"pl7.app/score/rankingOrder": "decreasing"
+				}
+			}
+		}
+	], addOwn)
+
+	// per-(clonotype, feature) matrix axes (advanced count matrix + the display-only fraction matrix)
+	matrixAxes := [
+		{ column: "scClonotypeKey", spec: scAxis },
+		{ column: "feature", spec: featureAxis }
+	]
+
+	// within-clonotype fraction MATRIX ([scClonotypeKey, featureId]) — DISPLAY ONLY. Drives the in-block
+	// property heatmap (x = feature axis). Not exported: Lead Selection consumes the per-antigen scalar
+	// columns below instead (a 2-axis matrix is not a per-clonotype filter).
+	importAndInject(inputs.fractionsLongFile, matrixAxes, [{
+		column: "fraction", id: "clonotypeFraction",
+		spec: {
+			name: "pl7.app/feature/clonotypeFraction", valueType: "Double",
+			annotations: {
+				"pl7.app/label": featPrefix + " · Feature fraction",
+				"pl7.app/format": ".3f",
+				"pl7.app/table/visibility": "default"
+			}
+		}
+	}], addDisplayOnly)
+
+	// advanced feature UMI-count matrix ([scClonotypeKey, featureId]) — display + export.
+	importAndInject(inputs.countsFile, matrixAxes, [{
+		column: "count", id: "clonotypeUmiCount",
+		spec: {
+			name: "pl7.app/feature/clonotypeUmiCount", valueType: "Int",
+			annotations: {
+				"pl7.app/label": featPrefix + " · Feature UMI count",
+				"pl7.app/table/visibility": "optional"
+			}
+		}
+	}], addOwn)
+
+	// per-antigen within-clonotype fraction: ONE scalar p-column per antigen, keyed [scClonotypeKey] with
+	// the antigen in the domain — display + export. This is the "one fraction pcolumn per antigen" Lead
+	// Selection filters on. Distinct name (antigenFraction, NOT clonotypeFraction) so it never collides
+	// with the fraction matrix in the model's graph-column name filter. Skipped when no antigen has signal
+	// (the wide CSV is then header-only and there are no columns to build).
+	if len(featureNames) > 0 {
+		perAntigenCols := []
+		for name in featureNames {
+			perAntigenCols = append(perAntigenCols, {
+				column: name, id: "antigenFraction_" + strings.substituteSpecialCharacters(name),
+				spec: {
+					name: "pl7.app/feature/antigenFraction", valueType: "Double",
+					domain: { "pl7.app/feature/featureId": name },
+					annotations: {
+						"pl7.app/label": name + " fraction",
+						"pl7.app/format": ".3f",
+						"pl7.app/table/visibility": "optional",
+						"pl7.app/table/orderPriority": "300"
+					}
+				}
+			})
+		}
+		importAndInject(inputs.fractionsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], perAntigenCols, addOwn)
+	}
+	}
+
+	// optional per-clonotype gene expression (clonotype x gene): mean/max across the clonotype's cells.
+	if hasGex {
+		gexSpec := columns.getSpec(inputs.gexColumnId)
+		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId
+		exprLabel := inputs.expressionMethod == "max" ? "Max expression" : "Mean expression"
+		importAndInject(inputs.expressionFile, [
+			{ column: "scClonotypeKey", spec: scAxis },
+			{ column: "geneId", spec: geneAxis }
+		], [{
+			column: "expression", id: "expression",
+			spec: {
+				name: "pl7.app/rna-seq/clonotypeExpression", valueType: "Double",
+				domain: { "pl7.app/feature/aggregation": inputs.expressionMethod },
+				annotations: {
+					"pl7.app/label": exprLabel,
+					"pl7.app/format": ".3f",
+					"pl7.app/table/visibility": "optional"
+				}
+			}
+		}], addOwn)
+	}
+
+	// per-clonotype dominant annotation, ONE column per annotation integration. Each is
+	// named and labeled from its source ("Dominant " + the source label, e.g. "Dominant Cell type",
+	// "Dominant Leiden Cluster Id"), distinguished by its source spec name in the domain, and carries its
+	// own discreteValues (present values + "ambiguous") for the downstream multi-select. Imported from the
+	// wide CSV whose columns are the manifest keys "ann0", "ann1", ...
+	if hasAnnotation {
+		annCols := []
+		for i, ann in inputs.annotations {
+			key := "ann" + string(i)
+			annCols = append(annCols, {
+				column: key, id: "domAnn_" + string(i),
+				spec: {
+					name: "pl7.app/rna-seq/clonotypeDominantAnnotation", valueType: "String",
+					domain: { "pl7.app/rna-seq/annotationSource": columns.getSpec(ann.ref).name },
+					annotations: {
+						"pl7.app/label": "Dominant " + ann.label,
+						"pl7.app/isDiscreteFilter": "true",
+						"pl7.app/discreteValues": string(json.encode(annotationValues[key] + ["ambiguous"])),
+						"pl7.app/table/visibility": "default",
+						"pl7.app/table/orderPriority": string(200 + i)
+					}
+				}
+			})
+		}
+		importAndInject(inputs.annotationsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], annCols, addOwn)
+	}
+
+	// Borrowed VDJ identity (label + primary CDR3 aa + V/J genes) -> displayPf ONLY. Keyed on
+	// scClonotypeKey alone so they render in the flat per-clonotype table; content-derived keys keep a
+	// column's frame identity stable if the matched set/order shifts between runs.
+	labelCol := columns.getColumn("clonotypeLabel")
+	fbDisplay.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
+	// Hide the borrowed per-chain (heavy/light) identity columns — CDR3 aa, V gene, J gene — by default,
+	// so the clonotype label + this block's own properties lead the results table and the chain details
+	// are opt-in. This helper receives exactly those columns (the cdr3aa / vGene / jGene queries); the
+	// clonotype LABEL (C-XXXXX) is added separately above and stays visible. Hidden by column identity,
+	// not by matching text in the label (an antigen name must never accidentally hide a column).
+	addIdentityCols := func(cols) {
+		for col in cols {
+			newAnnotations := {}
+			if col.spec.annotations != undefined {
+				for k, v in col.spec.annotations {
+					newAnnotations[k] = v
+				}
+			}
+			newAnnotations["pl7.app/table/visibility"] = "hidden"
+			newSpec := {}
+			for k, v in col.spec {
+				newSpec[k] = v
+			}
+			newSpec.annotations = newAnnotations
+			domain := newSpec.domain != undefined ? newSpec.domain : {}
+			fbDisplay.add("clonoIdentity_" + newSpec.name + "|" + string(canonical.encode(domain)), trace.inject(newSpec), col.data)
+		}
+	}
+	addIdentityCols(columns.getColumns("cdr3aa"))
+	addIdentityCols(columns.getColumns("vGene"))
+	addIdentityCols(columns.getColumns("jGene"))
+
+	displayPf := fbDisplay.build()
+	exportPf := fbExport.build()
+
+	result := {
+		// in-block table: own columns + borrowed identity, self-contained
+		clonotypeTable: pframes.exportFrame(displayPf),
+		// GraphMaker plot frame (own columns + identity for axis labels); resolved by this block's model
+		propertiesPf: displayPf,
+		// result-pool export for downstream ranking/lead-selection: own columns ONLY (no borrowed identity)
+		clonotypeProperties: exportPf
+	}
+
+	// Composition frame: the small pre-aggregated (annotation, category) -> clonotype-count table for the
+	// Composition stacked bar. A separate frame (axes [annotation, category], NOT per-clonotype), so it
+	// stays tiny at any dataset size. Only built when an annotation is integrated.
+	if hasAnnotation {
+		annAxis := { type: "String", name: "pl7.app/rna-seq/annotationName", annotations: { "pl7.app/label": "Annotation" } }
+		catAxis := { type: "String", name: "pl7.app/rna-seq/annotationValue", annotations: { "pl7.app/label": "Category" } }
+		fbComp := pframes.pFrameBuilder()
+		addComp := func(k, spec, data) {
+			fbComp.add(k, spec, data)
+		}
+		importAndInject(inputs.compositionFile, [
+			{ column: "annotation", spec: annAxis },
+			{ column: "category", spec: catAxis }
+		], [{
+			column: "count", id: "clonotypeCount",
+			spec: {
+				name: "pl7.app/vdj/clonotypeCount", valueType: "Int",
+				annotations: { "pl7.app/label": "Clonotype count" }
+			}
+		}], addComp)
+		result.compositionTable = pframes.exportFrame(fbComp.build())
+	}
+
+	return result
+})
