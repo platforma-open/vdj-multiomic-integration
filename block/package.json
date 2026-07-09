@@ -46,14 +46,14 @@
       "logo": "file:../logos/block-logo.png",
       "url": "https://github.com/platforma-open/vdj-multiomic-integration",
       "support": "mailto:support@milaboratories.com",
-      "description": "Aggregate per-cell feature data onto VDJ clonotypes: restriction index, breadth, dominant feature, per-feature fractions, and optional gene expression.",
+      "description": "Bring single-cell antigen binding and cell annotations onto each VDJ clonotype to reveal how specifically it binds, how many antigens it recognizes, and the cell populations it spans.",
       "longDescription": "file:../docs/description.md",
       "changelog": "file:../CHANGELOG.md",
       "tags": [
         "single-cell",
         "vdj",
         "clonotype",
-        "beam"
+        "annotation"
       ],
       "organization": {
         "name": "MiLaboratories Inc",
