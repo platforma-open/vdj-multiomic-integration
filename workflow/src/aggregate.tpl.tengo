@@ -17,6 +17,7 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 ll := import("@platforma-sdk/workflow-tengo:ll")
+json := import("json")
 
 aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
 
@@ -101,11 +102,17 @@ self.body(func(inputs) {
 			arg("--expression-method").arg(inputs.expressionMethod)
 	}
 
+	// annotations (0..N): one per-cell CSV each + a JSON manifest {csv, key, dominance} the Python loops
+	// over, so every annotation is folded on independently (not just the first).
 	if hasAnnotation {
-		annCsvFile := buildCellCsv(columns.getColumn(inputs.annotationColumnId), "cellType", ["sampleId", "cellId"])
-		run = run.addFile("annotation.csv", annCsvFile).
-			arg("--annotation-csv").arg("annotation.csv").
-			arg("--dominance-threshold-annotation").arg(string(inputs.annotationDominanceThreshold))
+		annManifest := []
+		for i, ann in inputs.annotations {
+			csvName := "annotation_" + string(i) + ".csv"
+			annCsvFile := buildCellCsv(columns.getColumn(ann.ref), "value", ["sampleId", "cellId"])
+			run = run.addFile(csvName, annCsvFile)
+			annManifest = append(annManifest, { csv: csvName, key: "ann" + string(i), dominance: ann.dominanceThreshold })
+		}
+		run = run.arg("--annotations").arg(string(json.encode(annManifest)))
 	}
 
 	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
@@ -127,7 +134,7 @@ self.body(func(inputs) {
 		run = run.saveFile("result_expression.csv")
 	}
 	if hasAnnotation {
-		run = run.saveFile("result_annotation.csv")
+		run = run.saveFile("result_annotations_wide.csv")
 	}
 	run = run.run()
 
@@ -149,7 +156,7 @@ self.body(func(inputs) {
 		result.expressionFile = run.getFile("result_expression.csv")
 	}
 	if hasAnnotation {
-		result.annotationFile = run.getFile("result_annotation.csv")
+		result.annotationsWideFile = run.getFile("result_annotations_wide.csv")
 	}
 	return result
 })

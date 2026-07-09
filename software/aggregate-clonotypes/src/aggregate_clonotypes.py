@@ -121,10 +121,13 @@ def main() -> None:
     p.add_argument("--feature-csv", default=None)
     p.add_argument("--linker-csv", required=True)
     p.add_argument("--gex-csv", default=None)
-    p.add_argument("--annotation-csv", default=None)
+    p.add_argument(
+        "--annotations",
+        default=None,
+        help="JSON manifest of annotation inputs: [{'csv': ..., 'key': ..., 'dominance': ...}].",
+    )
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--dominance-threshold-feature", type=float, default=None)
-    p.add_argument("--dominance-threshold-annotation", type=float, default=None)
     p.add_argument("--presence-threshold", type=float, default=0.0)
     p.add_argument(
         "--presence-thresholds",
@@ -138,17 +141,10 @@ def main() -> None:
 
     presence_thresholds = _load_presence_thresholds(args.presence_thresholds)
 
-    # Dominance threshold per dominant-category call: features and annotations each carry their own,
-    # falling back to the shared --dominance-threshold when their specific value is absent.
+    # Feature dominance threshold, falling back to the shared --dominance-threshold. Each annotation
+    # carries its own dominance in the --annotations manifest.
     feature_dominance = (
-        args.dominance_threshold_feature
-        if args.dominance_threshold_feature is not None
-        else args.dominance_threshold
-    )
-    annotation_dominance = (
-        args.dominance_threshold_annotation
-        if args.dominance_threshold_annotation is not None
-        else args.dominance_threshold
+        args.dominance_threshold_feature if args.dominance_threshold_feature is not None else args.dominance_threshold
     )
 
     # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the GEX and
@@ -172,9 +168,7 @@ def main() -> None:
         )
 
         # per-feature fractions, long (clonotype x feature) — drives the in-block property heatmap
-        frac_long = cf.with_columns(
-            (pl.col("count") / pl.col("count").sum().over("scClonotypeKey")).alias("fraction")
-        )
+        frac_long = cf.with_columns((pl.col("count") / pl.col("count").sum().over("scClonotypeKey")).alias("fraction"))
         (
             frac_long.select(["scClonotypeKey", "feature", "fraction"])
             .sort(["scClonotypeKey", "feature"])
@@ -236,26 +230,31 @@ def main() -> None:
             .write_csv(f"{args.output_prefix}_expression.csv")
         )
 
-    # optional annotation: dominant cell type per clonotype (dominant-category rule)
-    annotation_values: list[str] = []
-    if args.annotation_csv is not None:
-        ann = pl.read_csv(args.annotation_csv).join(linker, on=["sampleId", "cellId"], how="inner")
-        annotation_values = sorted(v for v in ann["cellType"].unique().to_list() if v is not None)
-        ann_rows = []
-        for (clono,), grp in ann.group_by(["scClonotypeKey"]):
-            vc = grp["cellType"].value_counts()
-            d = dict(zip(vc["cellType"].to_list(), vc["count"].to_list()))
-            ann_rows.append(
-                {"scClonotypeKey": clono, "dominantCellType": dominant_category(d, annotation_dominance)}
-            )
-        _write_sorted(
-            ann_rows,
-            {"scClonotypeKey": pl.String, "dominantCellType": pl.String},
-            f"{args.output_prefix}_annotation.csv",
-        )
+    # annotations (0..N): each folds onto clonotypes by the dominant-category rule with its own dominance
+    # threshold. Emitted as one wide CSV (a dominant column per annotation key, keyed [scClonotypeKey]) plus
+    # a {key: distinct values} map for the downstream discreteValues multi-select. Column value header in
+    # each input CSV is "value" (generic across cell type, cluster id, or any categorical annotation).
+    annotation_manifest = json.loads(args.annotations) if args.annotations else []
+    annotation_values: dict[str, list[str]] = {}
+    if annotation_manifest:
+        # base of every clonotype so an annotation missing for a clonotype yields null (spec A-0020)
+        wide_ann = linker.select("scClonotypeKey").unique()
+        for entry in annotation_manifest:
+            key = entry["key"]
+            dom = entry["dominance"]
+            ann = pl.read_csv(entry["csv"]).join(linker, on=["sampleId", "cellId"], how="inner")
+            annotation_values[key] = sorted(v for v in ann["value"].unique().to_list() if v is not None)
+            rows = []
+            for (clono,), grp in ann.group_by(["scClonotypeKey"]):
+                vc = grp["value"].value_counts()
+                d = dict(zip(vc["value"].to_list(), vc["count"].to_list()))
+                rows.append({"scClonotypeKey": clono, key: dominant_category(d, dom)})
+            df = pl.DataFrame(rows, schema={"scClonotypeKey": pl.String, key: pl.String})
+            wide_ann = wide_ann.join(df, on="scClonotypeKey", how="left")
+        wide_ann.sort("scClonotypeKey").write_csv(f"{args.output_prefix}_annotations_wide.csv")
 
-    # distinct annotation values, for the dominant-cell-type column's discreteValues (downstream
-    # multi-select filter). Empty list when no annotation is integrated.
+    # {key: distinct annotation values} for the per-annotation dominant column discreteValues (downstream
+    # multi-select). Empty map when no annotation is integrated.
     with open(f"{args.output_prefix}_annotation_values.json", "w") as f:
         json.dump(annotation_values, f)
 
