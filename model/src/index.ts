@@ -9,6 +9,7 @@ import {
   createPlDataTableStateV2,
   createPlDataTableV3,
   DataModelBuilder,
+  isPColumnSpec,
   OutputColumnProvider,
 } from "@platforma-sdk/model";
 import type { BlockArgs, BlockData } from "./types";
@@ -35,19 +36,37 @@ function discoverLinkedOptions(
   }));
 }
 
+// Per-cell categorical annotation columns: a [sampleId, cellId] String PColumn. Discovered by shape,
+// not by name, so any annotation from the gene-expression pipeline is offered — not only cell type. The
+// block's own feature columns (pl7.app/feature/*) are excluded: those are integrated as features.
+function discoverAnnotationOptions(
+  ctx: RenderCtx<BlockArgs, BlockData>,
+): { label: string; value: SUniversalPColumnId }[] {
+  const opts = ctx.resultPool.getOptions(
+    (spec) =>
+      isPColumnSpec(spec) &&
+      spec.valueType === "String" &&
+      spec.axesSpec.length === 2 &&
+      spec.axesSpec.some((a) => a.name === "pl7.app/sc/cellId") &&
+      !spec.name.startsWith("pl7.app/feature/"),
+  );
+  return (opts ?? []).map((o) => ({
+    label: o.label,
+    value: JSON.stringify(o.ref) as SUniversalPColumnId,
+  }));
+}
+
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
 const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
-  dominanceThreshold: 0.6,
-  antigenSettings: {},
-  expressionMethod: "mean" as const,
+  integrations: [],
   customBlockLabel: "",
   defaultBlockLabel: "",
   tableState: createPlDataTableStateV2(),
   // Property heatmap defaults to the clustered template with column mean-normalization — the view the
   // BEAM6 reference project settled on (feedback: "defaults set to what is currently set in BEAM6").
   heatmapState: {
-    title: "Antigen property heatmap",
+    title: "Property heatmap",
     template: "heatmapClustered" as const,
     currentTab: null,
     layersSettings: {
@@ -117,29 +136,29 @@ function graphPFrame(
 export const platforma = BlockModelV3.create(dataModel)
   .args<BlockArgs>((data) => {
     if (!data.datasetRef) throw new Error("Select a VDJ single-cell dataset");
-    if (!data.featureColumnId)
-      throw new Error("Select the Feature Integration per-cell feature column");
-    // Per-antigen presence cutoffs -> a canonical (sorted-key), default-pruned map. Only antigens with a
-    // real override (> 0) reach args, so toggling an antigen's plot visibility (UI-only `hidden`) or
-    // leaving a card at the 0.0 default never stales the block.
-    const presenceThresholds: Record<string, number> = {};
-    for (const name of Object.keys(data.antigenSettings ?? {}).sort()) {
-      const t = data.antigenSettings[name]?.presenceThreshold;
-      if (typeof t === "number" && t > 0) {
-        presenceThresholds[name] = Math.min(1, t);
-      }
-    }
+    const integrations = data.integrations ?? [];
+    if (integrations.length === 0)
+      throw new Error("Add at least one integration (a feature or an annotation)");
+    // A card added but not yet given a selection gates the run (mirrors Lead Selection's half-filled card).
+    if (integrations.some((i) => !i.ref || !i.kind))
+      throw new Error("Every added card must select a data type");
+    // Project the generic integration list to the workflow's column slots: the first feature-kind
+    // integration is the feature matrix, the first annotation-kind is the annotation.
+    const feature = integrations.find((i) => i.kind === "feature");
+    const annotation = integrations.find((i) => i.kind === "annotation");
+    // Single presence cutoff from the feature integration, applied to every feature (0 when absent).
+    const presenceThreshold = Math.min(1, Math.max(0, feature?.presenceThreshold ?? 0));
+    // Per-integration dominance thresholds, clamped to the 0.5 floor (A-0012).
+    const dom = (i?: { dominanceThreshold?: number }) =>
+      Math.max(DOMINANCE_FLOOR, i?.dominanceThreshold ?? 0.6);
     return {
       datasetRef: data.datasetRef,
-      featureColumnId: data.featureColumnId,
-      // gexColumnId + expressionMethod feed the optional per-gene expression output (A-0019),
-      // activated via the GEX controls in the settings modal. See workflow/src/aggregate.tpl.tengo.
-      gexColumnId: data.gexColumnId,
-      annotationColumnId: data.annotationColumnId,
-      // canonicalize + clamp to the 0.5 floor (A-0012)
-      dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
-      presenceThresholds,
-      expressionMethod: data.expressionMethod ?? "mean",
+      featureColumnId: feature?.ref,
+      annotationColumnId: annotation?.ref,
+      featureDominanceThreshold: dom(feature),
+      annotationDominanceThreshold: dom(annotation),
+      presenceThreshold,
+      expressionMethod: "mean",
       // Block label -> workflow trace label (finalize). Changing it re-runs so the new label is baked
       // into the exported columns' provenance.
       customBlockLabel: data.customBlockLabel ?? "",
@@ -158,31 +177,16 @@ export const platforma = BlockModelV3.create(dataModel)
       { refsWithEnrichments: true },
     ),
   )
-  // Feature Integration per-cell UMI-count column, discovered via the cell linker from the dataset
-  // anchor. Value is the global hit id (workflow-resolvable) — see discoverLinkedOptions. Ungated (the
-  // query is pool-wide, not dataset-scoped) so the settings modal can auto-select it on dataset pick.
-  .output("featureOptions", (ctx) => discoverLinkedOptions(ctx, "pl7.app/feature/umiCount"))
-  // Optional per-cell gene-expression count matrix, auto-selected on dataset pick to drive the per-gene
-  // expression output (A-0019).
-  .output("gexOptions", (ctx) => discoverLinkedOptions(ctx, "pl7.app/rna-seq/countMatrix"))
-  // Optional per-cell cell-type annotation, auto-selected on dataset pick.
-  .output("annotationOptions", (ctx) => discoverLinkedOptions(ctx, "pl7.app/rna-seq/cellType"))
-  // Antigens discovered from the emitted per-antigen fraction columns (one column per antigen, the
-  // antigen in the featureId domain) — the source list for the per-antigen Settings cards. Available
-  // after the first run (the antigen set is data-derived); reads specs only, so it is cheap. Sorted + deduped.
-  .output("antigenOptions", (ctx) => {
-    try {
-      const cols = ctx.outputs?.resolve("clonotypeTable")?.getPColumns();
-      if (!cols) return [];
-      const names = cols
-        .filter((c) => c.spec.name === "pl7.app/feature/antigenFraction")
-        .map((c) => c.spec.domain?.["pl7.app/feature/featureId"])
-        .filter((n): n is string => typeof n === "string");
-      return [...new Set(names)].sort();
-    } catch {
-      return [];
-    }
-  })
+  // The per-cell columns the user can add as integrations. Feature-kind is the featureId-axis UMI matrix
+  // (one column carrying every feature); annotation-kind is any [sampleId, cellId] String column. Values
+  // are global hit ids (workflow-resolvable); `kind` routes each to the right aggregation.
+  .output("integrationOptions", (ctx) => [
+    ...discoverLinkedOptions(ctx, "pl7.app/feature/umiCount").map((o) => ({
+      ...o,
+      kind: "feature" as const,
+    })),
+    ...discoverAnnotationOptions(ctx).map((o) => ({ ...o, kind: "annotation" as const })),
+  ])
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback. The Python aggregation is a long-running (16 GiB) step.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
@@ -240,15 +244,34 @@ export const platforma = BlockModelV3.create(dataModel)
   // dataset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
   // VDJM instances are distinguishable both here and in downstream Lead Selection column labels.
   .subtitle((ctx) => ctx.data.customBlockLabel || ctx.data.defaultBlockLabel)
-  .sections(() => [
-    { type: "link" as const, href: "/" as const, label: "Main" },
-    { type: "link" as const, href: "/heatmap" as const, label: "Property Heatmap" },
-    { type: "link" as const, href: "/distribution" as const, label: "Distribution" },
-  ])
+  // The plot pages read the feature binding profile (the [scClonotypeKey, featureId] fraction matrix and
+  // the restriction-index / breadth scalars). Show them only once that profile is computed, so a run with
+  // no feature integration (or before the first run) surfaces just Main.
+  .sections((ctx) => {
+    const hasProfile = (() => {
+      try {
+        return !!ctx.outputs
+          ?.resolve("clonotypeTable")
+          ?.getPColumns()
+          ?.some((c) => c.spec.name === "pl7.app/feature/clonotypeFraction");
+      } catch {
+        return false;
+      }
+    })();
+    return [
+      { type: "link" as const, href: "/" as const, label: "Main" },
+      ...(hasProfile
+        ? [
+            { type: "link" as const, href: "/heatmap" as const, label: "Property Heatmap" },
+            { type: "link" as const, href: "/distribution" as const, label: "Distribution" },
+          ]
+        : []),
+    ];
+  })
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;
-export type { AntigenSetting, BlockArgs, BlockData } from "./types";
+export type { BlockArgs, BlockData, IntegrationEntry, IntegrationKind } from "./types";
 // Re-exported for the UI package (which depends on this model package, not @platforma-sdk/model directly).
 export { createPlDataTableStateV2 } from "@platforma-sdk/model";
 export type { PlRef } from "@platforma-sdk/model";

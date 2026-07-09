@@ -123,6 +123,8 @@ def main() -> None:
     p.add_argument("--gex-csv", default=None)
     p.add_argument("--annotation-csv", default=None)
     p.add_argument("--dominance-threshold", type=float, default=0.6)
+    p.add_argument("--dominance-threshold-feature", type=float, default=None)
+    p.add_argument("--dominance-threshold-annotation", type=float, default=None)
     p.add_argument("--presence-threshold", type=float, default=0.0)
     p.add_argument(
         "--presence-thresholds",
@@ -135,6 +137,19 @@ def main() -> None:
     args = p.parse_args()
 
     presence_thresholds = _load_presence_thresholds(args.presence_thresholds)
+
+    # Dominance threshold per dominant-category call: features and annotations each carry their own,
+    # falling back to the shared --dominance-threshold when their specific value is absent.
+    feature_dominance = (
+        args.dominance_threshold_feature
+        if args.dominance_threshold_feature is not None
+        else args.dominance_threshold
+    )
+    annotation_dominance = (
+        args.dominance_threshold_annotation
+        if args.dominance_threshold_annotation is not None
+        else args.dominance_threshold
+    )
 
     # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the GEX and
     # annotation joins below; reading it a single time avoids re-parsing a per-cell table (one row per
@@ -191,7 +206,7 @@ def main() -> None:
                 "scClonotypeKey": clono,
                 "restrictionIndex": restriction_index(counts),
                 "breadth": len(present),
-                "dominantFeature": dominant_category(present, args.dominance_threshold),
+                "dominantFeature": dominant_category(present, feature_dominance),
             }
         )
     _write_sorted(
@@ -217,20 +232,27 @@ def main() -> None:
         )
 
     # optional annotation: dominant cell type per clonotype (dominant-category rule)
+    annotation_values: list[str] = []
     if args.annotation_csv is not None:
         ann = pl.read_csv(args.annotation_csv).join(linker, on=["sampleId", "cellId"], how="inner")
+        annotation_values = sorted(v for v in ann["cellType"].unique().to_list() if v is not None)
         ann_rows = []
         for (clono,), grp in ann.group_by(["scClonotypeKey"]):
             vc = grp["cellType"].value_counts()
             d = dict(zip(vc["cellType"].to_list(), vc["count"].to_list()))
             ann_rows.append(
-                {"scClonotypeKey": clono, "dominantCellType": dominant_category(d, args.dominance_threshold)}
+                {"scClonotypeKey": clono, "dominantCellType": dominant_category(d, annotation_dominance)}
             )
         _write_sorted(
             ann_rows,
             {"scClonotypeKey": pl.String, "dominantCellType": pl.String},
             f"{args.output_prefix}_annotation.csv",
         )
+
+    # distinct annotation values, for the dominant-cell-type column's discreteValues (downstream
+    # multi-select filter). Empty list when no annotation is integrated.
+    with open(f"{args.output_prefix}_annotation_values.json", "w") as f:
+        json.dump(annotation_values, f)
 
 
 if __name__ == "__main__":

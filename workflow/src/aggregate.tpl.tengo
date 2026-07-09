@@ -17,7 +17,6 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 ll := import("@platforma-sdk/workflow-tengo:ll")
-json := import("json")
 
 aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
 
@@ -83,14 +82,13 @@ self.body(func(inputs) {
 		addFile("linker.csv", linkerCsvFile).
 		arg("--feature-csv").arg("features.csv").
 		arg("--linker-csv").arg("linker.csv").
-		arg("--dominance-threshold").arg(string(inputs.dominanceThreshold)).
+		arg("--dominance-threshold-feature").arg(string(inputs.featureDominanceThreshold)).
 		arg("--output-prefix").arg("result")
 
-	// per-antigen presence cutoffs (feedback: per-antigen presence/binding threshold). Inline JSON map
-	// {antigen: threshold}; antigens not listed fall back to the Python's 0.0 default. Omitted entirely
-	// when empty so the run is identical to the all-default case.
-	if inputs.presenceThresholds != undefined && len(inputs.presenceThresholds) > 0 {
-		run = run.arg("--presence-thresholds").arg(string(json.encode(inputs.presenceThresholds)))
+	// presence cutoff (within-clonotype fraction) applied to every feature; feeds breadth and the
+	// dominant-feature call.
+	if inputs.presenceThreshold != undefined {
+		run = run.arg("--presence-threshold").arg(string(inputs.presenceThreshold))
 	}
 
 	if hasGex {
@@ -103,7 +101,8 @@ self.body(func(inputs) {
 	if hasAnnotation {
 		annCsvFile := buildCellCsv(columns.getColumn(inputs.annotationColumnId), "cellType", ["sampleId", "cellId"])
 		run = run.addFile("annotation.csv", annCsvFile).
-			arg("--annotation-csv").arg("annotation.csv")
+			arg("--annotation-csv").arg("annotation.csv").
+			arg("--dominance-threshold-annotation").arg(string(inputs.annotationDominanceThreshold))
 	}
 
 	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
@@ -114,7 +113,8 @@ self.body(func(inputs) {
 		saveFile("result_fractions.csv").
 		saveFile("result_fractions_wide.csv").
 		saveFile("result_counts.csv").
-		saveFileContent("result_feature_names.json")
+		saveFileContent("result_feature_names.json").
+		saveFileContent("result_annotation_values.json")
 	if hasGex {
 		run = run.saveFile("result_expression.csv")
 	}
@@ -125,14 +125,21 @@ self.body(func(inputs) {
 
 	// Return the run's output files (resources). main.tpl.tengo forwards these to finalize together with
 	// the unresolved bundle. featureNames is content (read as a value in finalize); the rest are files
-	// consumed by xsv.importFile there.
-	return {
+	// consumed by xsv.importFile there. The GEX / annotation files are added only when those inputs are
+	// present: a template output field cannot be assigned undefined.
+	result := {
 		featureNames: run.getFileContent("result_feature_names.json"),
+		annotationValues: run.getFileContent("result_annotation_values.json"),
 		propertiesFile: run.getFile("result_properties.csv"),
 		fractionsLongFile: run.getFile("result_fractions.csv"),
 		fractionsWideFile: run.getFile("result_fractions_wide.csv"),
-		countsFile: run.getFile("result_counts.csv"),
-		expressionFile: hasGex ? run.getFile("result_expression.csv") : undefined,
-		annotationFile: hasAnnotation ? run.getFile("result_annotation.csv") : undefined
+		countsFile: run.getFile("result_counts.csv")
 	}
+	if hasGex {
+		result.expressionFile = run.getFile("result_expression.csv")
+	}
+	if hasAnnotation {
+		result.annotationFile = run.getFile("result_annotation.csv")
+	}
+	return result
 })

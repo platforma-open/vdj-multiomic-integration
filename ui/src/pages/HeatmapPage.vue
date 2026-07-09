@@ -22,19 +22,6 @@ const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | null =>
     { inputName: "y", selectedSource: fraction.spec.axesSpec[0] },
     { inputName: "value", selectedSource: fraction.spec },
   ];
-
-  // Hide antigens the user toggled off (the card eye) from the heatmap: filter the feature axis to the
-  // visible set. Plots-only (never re-runs the block); applied as an initial GraphMaker filter default.
-  const antigens = app.model.outputs.antigenOptions ?? [];
-  const settings = app.model.data.antigenSettings ?? {};
-  const visible = antigens.filter((name) => settings[name]?.hidden !== true);
-  if (visible.length < antigens.length) {
-    options.push({
-      inputName: "filters",
-      selectedSource: fraction.spec.axesSpec[1],
-      selectedFilterValues: visible,
-    });
-  }
   return options;
 });
 </script>

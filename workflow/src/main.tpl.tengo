@@ -63,8 +63,9 @@ wf.body(func(args) {
 		featureColumnId: args.featureColumnId,
 		gexColumnId: args.gexColumnId,
 		annotationColumnId: args.annotationColumnId,
-		dominanceThreshold: args.dominanceThreshold,
-		presenceThresholds: args.presenceThresholds,
+		featureDominanceThreshold: args.featureDominanceThreshold,
+		annotationDominanceThreshold: args.annotationDominanceThreshold,
+		presenceThreshold: args.presenceThreshold,
 		expressionMethod: args.expressionMethod,
 		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
@@ -73,6 +74,7 @@ wf.body(func(args) {
 	result := render.createEphemeral(finalizeTpl, {
 		columns: columns,
 		featureNames: agg.output("featureNames"),
+		annotationValues: agg.output("annotationValues"),
 		propertiesFile: agg.output("propertiesFile"),
 		fractionsLongFile: agg.output("fractionsLongFile"),
 		fractionsWideFile: agg.output("fractionsWideFile"),
