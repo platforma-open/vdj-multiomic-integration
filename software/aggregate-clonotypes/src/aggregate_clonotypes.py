@@ -246,7 +246,13 @@ def main() -> None:
             key = entry["key"]
             dom = entry["dominance"]
             label = entry["label"]
-            ann = pl.read_csv(entry["csv"]).join(linker, on=["sampleId", "cellId"], how="inner")
+            # drop cells with a null annotation value so None never competes as a category in the
+            # dominance calc (a clonotype whose cells are all null then gets a null dominant call)
+            ann = (
+                pl.read_csv(entry["csv"])
+                .join(linker, on=["sampleId", "cellId"], how="inner")
+                .filter(pl.col("value").is_not_null())
+            )
             annotation_values[key] = sorted(v for v in ann["value"].unique().to_list() if v is not None)
             rows = []
             for (clono,), grp in ann.group_by(["scClonotypeKey"]):

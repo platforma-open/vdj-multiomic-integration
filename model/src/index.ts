@@ -153,9 +153,13 @@ export const platforma = BlockModelV3.create(dataModel)
     // A card added but not yet given a selection gates the run (mirrors Lead Selection's half-filled card).
     if (integrations.some((i) => !i.ref || !i.kind))
       throw new Error("Every added card must select a data type");
-    // Project the generic integration list to the workflow: the first feature-kind integration is the
+    // Project the generic integration list to the workflow: the single feature-kind integration is the
     // feature matrix; every annotation-kind integration is folded on independently (dominant-category).
-    const feature = integrations.find((i) => i.kind === "feature");
+    // The workflow carries one featureColumnId, so more than one feature card is rejected rather than
+    // silently dropped.
+    const features = integrations.filter((i) => i.kind === "feature");
+    if (features.length > 1) throw new Error("Only one feature integration is supported");
+    const feature = features[0];
     // Single presence cutoff from the feature integration, applied to every feature (0 when absent).
     const presenceThreshold = Math.min(1, Math.max(0, feature?.presenceThreshold ?? 0));
     // Per-integration dominance thresholds, clamped to the 0.5 floor.
