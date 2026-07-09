@@ -1,12 +1,11 @@
 """Per-clonotype aggregation for the VDJ Multiomic Integration block.
 
 Joins per-cell tables to the cell<->clonotype linker on [sampleId, cellId], groups by scClonotypeKey
-across samples (spec A-0005, no sample axis), and computes the per-clonotype binding profile and
-properties.
+across samples (no sample axis), and computes the per-clonotype binding profile and properties.
 
-The math functions are ported verbatim from the clonotype-distribution block's compartment_analysis.py
-(spec A-0013) and the dominant-category rule (spec A-0012); they are pure and unit-tested. Every output
-is sorted before writing for determinism + workflow canonicality.
+The math functions are ported verbatim from the clonotype-distribution block's compartment_analysis.py,
+alongside the dominant-category rule; they are pure and unit-tested. Every output is sorted before
+writing for determinism + workflow canonicality.
 
 Per-antigen presence cutoff: a feature is "present"/bound for a clonotype when its within-clonotype
 fraction exceeds that feature's presence threshold (a per-antigen map, falling back to a global
@@ -71,7 +70,7 @@ def present_features(
 
 
 def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
-    """Dominant-category rule (spec A-0012): unique max with share >= threshold, else 'ambiguous'
+    """Dominant-category rule: unique max with share >= threshold, else 'ambiguous'
     when signal exists, else None. threshold clamped up to the 0.5 floor."""
     threshold = max(threshold, DOMINANCE_FLOOR)
     positive = {k: v for k, v in counts.items() if v > 0}
@@ -96,9 +95,9 @@ def _load_presence_thresholds(spec: str | None) -> dict[str, float]:
 
 def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.DataFrame:
     """(sampleId, cellId, feature, umiCount) join linker (sampleId, cellId, scClonotypeKey) ->
-    (scClonotypeKey, feature, count) summed across samples (spec A-0005). Inner join drops cells with
-    no clonotype (DP-4); features whose summed count is 0 in a clonotype are dropped too, keeping the
-    matrix sparse per DP-4 and avoiding a 0/0 within-clonotype fraction downstream."""
+    (scClonotypeKey, feature, count) summed across samples. Inner join drops cells with
+    no clonotype; features whose summed count is 0 in a clonotype are dropped too, keeping the
+    matrix sparse and avoiding a 0/0 within-clonotype fraction downstream."""
     return (
         feats.join(linker, on=["sampleId", "cellId"], how="inner")
         .group_by(["scClonotypeKey", "feature"])
@@ -241,7 +240,7 @@ def main() -> None:
     # dataset size: at most #annotations x #categories rows.
     composition_rows: list[dict] = []
     if annotation_manifest:
-        # base of every clonotype so an annotation missing for a clonotype yields null (spec A-0020)
+        # base of every clonotype so an annotation missing for a clonotype yields null
         wide_ann = linker.select("scClonotypeKey").unique()
         for entry in annotation_manifest:
             key = entry["key"]
