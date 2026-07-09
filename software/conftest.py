@@ -26,4 +26,10 @@ def features_csv():
 
 @pytest.fixture(scope="session")
 def linker_csv():
-    return BED / "linker.csv"
+    p = BED / "linker.csv"
+    if not p.exists():
+        pytest.fail(
+            f"committed test bed missing at {p}; restore software/test-data/clono-synthetic/",
+            pytrace=False,
+        )
+    return p
