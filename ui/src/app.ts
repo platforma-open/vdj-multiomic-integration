@@ -10,9 +10,8 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
   app.model.data.customBlockLabel ??= "";
 
   // Keep the default block label in sync with the selected dataset's label, so the subtitle and the
-  // downstream trace prefix reflect this instance's input. This is the sanctioned block-label hairpin
-  // (output -> data write) documented in harnesses/block-dev/hairpin.md — the one tolerated exception;
-  // it only writes the derived default, never the user's customBlockLabel.
+  // downstream trace prefix reflect this instance's input. This output -> data write is intentional and
+  // narrow: it only writes the derived default, never the user's customBlockLabel.
   watchEffect(() => {
     const datasetRef = app.model.data.datasetRef;
     const options = app.model.outputs.datasetOptions ?? [];

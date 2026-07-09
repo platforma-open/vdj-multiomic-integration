@@ -84,7 +84,7 @@ self.body(func(inputs) {
 	featureSpec := columns.getSpec(inputs.featureColumnId)
 	featureAxis := featureSpec.axesSpec[2] // pl7.app/feature/featureId
 
-	// per-clonotype properties: dominant antigen (categorical, A-0012) + restriction index / breadth
+	// per-clonotype properties: dominant antigen (categorical) + restriction index / breadth
 	// (numerical scores). The dominant antigen carries discreteValues (the present antigens + "ambiguous")
 	// on top of isDiscreteFilter — Lead Selection's FilterCard requires BOTH to render a multi-select.
 	// Attribute the feature metrics to their source integration (e.g. "Antigens · Restriction index"), and
@@ -155,7 +155,7 @@ self.body(func(inputs) {
 		}
 	}], addDisplayOnly)
 
-	// advanced feature UMI-count matrix ([scClonotypeKey, featureId]) — display + export (A-0015).
+	// advanced feature UMI-count matrix ([scClonotypeKey, featureId]) — display + export.
 	importAndInject(inputs.countsFile, matrixAxes, [{
 		column: "count", id: "clonotypeUmiCount",
 		spec: {
@@ -215,7 +215,7 @@ self.body(func(inputs) {
 		}], addOwn)
 	}
 
-	// per-clonotype dominant annotation, ONE column per annotation integration (spec A-0020). Each is
+	// per-clonotype dominant annotation, ONE column per annotation integration. Each is
 	// named and labeled from its source ("Dominant " + the source label, e.g. "Dominant Cell type",
 	// "Dominant Leiden Cluster Id"), distinguished by its source spec name in the domain, and carries its
 	// own discreteValues (present values + "ambiguous") for the downstream multi-select. Imported from the

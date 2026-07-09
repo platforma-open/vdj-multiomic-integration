@@ -56,15 +56,14 @@ function discoverAnnotationOptions(
   }));
 }
 
-const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
+const DOMINANCE_FLOOR = 0.5; // the dominance threshold is user-adjustable down to 0.5, never lower
 
 const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   integrations: [],
   customBlockLabel: "",
   defaultBlockLabel: "",
   tableState: createPlDataTableStateV2(),
-  // Property heatmap defaults to the clustered template with column mean-normalization — the view the
-  // BEAM6 reference project settled on (feedback: "defaults set to what is currently set in BEAM6").
+  // Property heatmap defaults to the clustered template with column mean-normalization.
   heatmapState: {
     title: "Feature heatmap",
     template: "heatmapClustered" as const,
@@ -159,7 +158,7 @@ export const platforma = BlockModelV3.create(dataModel)
     const feature = integrations.find((i) => i.kind === "feature");
     // Single presence cutoff from the feature integration, applied to every feature (0 when absent).
     const presenceThreshold = Math.min(1, Math.max(0, feature?.presenceThreshold ?? 0));
-    // Per-integration dominance thresholds, clamped to the 0.5 floor (A-0012).
+    // Per-integration dominance thresholds, clamped to the 0.5 floor.
     const dom = (i?: { dominanceThreshold?: number }) =>
       Math.max(DOMINANCE_FLOOR, i?.dominanceThreshold ?? 0.6);
     const annotations = integrations

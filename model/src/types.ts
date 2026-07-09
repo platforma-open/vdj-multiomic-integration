@@ -32,17 +32,17 @@ export type IntegrationEntry = {
  */
 export type BlockArgs = {
   datasetRef: PlRef; // VDJ single-cell dataset (the cellLinker anchor)
-  // The first feature-kind integration's per-cell UMI-count column (spec A-0010), when one is present.
+  // The first feature-kind integration's per-cell UMI-count column, when one is present.
   // Optional: the block also runs on VDJ + annotations with no features.
   featureColumnId?: SUniversalPColumnId;
   featureLabel?: string; // the feature integration's display label (e.g. "Antigens"), used to attribute its metrics
-  gexColumnId?: SUniversalPColumnId; // gene-expression count matrix (spec A-0019)
-  featureDominanceThreshold: number; // dominance threshold for the dominant-feature call (spec A-0012, floor 0.5)
-  // Every annotation-kind integration to fold onto clonotypes (dominant-category, spec A-0020): its column
+  gexColumnId?: SUniversalPColumnId; // gene-expression count matrix
+  featureDominanceThreshold: number; // dominance threshold for the dominant-feature call (floor 0.5)
+  // Every annotation-kind integration to fold onto clonotypes (dominant-category): its column
   // ref, its own dominance threshold, and its source label (used to name the emitted dominant column).
   annotations: { ref: SUniversalPColumnId; dominanceThreshold: number; label: string }[];
   presenceThreshold: number; // within-clonotype fraction a feature must exceed to count as bound (feeds breadth + dominant-feature); applied to every feature
-  expressionMethod: "mean" | "max"; // gene-expression aggregation method (spec A-0019)
+  expressionMethod: "mean" | "max"; // gene-expression aggregation method
   // Block label -> the pl7.app/trace step label on every emitted column, so downstream (Lead Selection)
   // can tell which VDJM instance a column came from. customBlockLabel is the user's override; defaultBlockLabel
   // is the input-derived fallback (the selected dataset's label).

@@ -8,8 +8,8 @@ const app = useApp();
 
 // Clonotype × antigen property heatmap: y = clonotype, x = antigen, color = within-clonotype fraction.
 // The block default template is the clustered heatmap with column mean-normalization (set in the model's
-// heatmapState init — the BEAM6 reference configuration). The fraction column is keyed on
-// [scClonotypeKey, featureId] (axesSpec[0], axesSpec[1]).
+// heatmapState init). The fraction column is keyed on [scClonotypeKey, featureId]
+// (axesSpec[0], axesSpec[1]).
 const defaultOptions = computed((): PredefinedGraphOption<"heatmap">[] | null => {
   const pCols = app.model.outputs.bindingPCols;
   if (!pCols || pCols.length === 0) return null;
