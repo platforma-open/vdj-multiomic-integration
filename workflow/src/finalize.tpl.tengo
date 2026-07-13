@@ -44,7 +44,7 @@ self.body(func(inputs) {
 	// so this block's trace step appends to a real upstream spec in every configuration. Label = this
 	// instance's block label, so two VDJM blocks stamp distinct downstream provenance.
 	traceSeed := hasFeature ? columns.getSpec(inputs.featureColumnId) : linkerCol.spec
-	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "VDJ Multiomic Integration"
+	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "Clonotype Multiomic Integration"
 	trace := pSpec.makeTrace(traceSeed, {
 		type: "milaboratories.vdj-multiomic-integration",
 		id: inputs.blockId,
