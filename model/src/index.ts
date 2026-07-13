@@ -278,7 +278,7 @@ export const platforma = BlockModelV3.create(dataModel)
       return undefined;
     }
   })
-  .title(() => "VDJ Multiomic Integration")
+  .title(() => "Clonotype Multiomic Integration")
   // Subtitle = the block label: the user's override, else the input-derived default (the selected
   // dataset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
   // VDJM instances are distinguishable both here and in downstream Lead Selection column labels.
