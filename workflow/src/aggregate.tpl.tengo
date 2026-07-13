@@ -10,7 +10,7 @@
 //
 // SCOPE here: resolve the bundle, guard the single-grouping requirement, build the input
 // CSVs, and run the Python. All column-spec construction (dominant antigen + discreteValues, the
-// per-antigen fraction columns, RI/breadth, the matrices, optional GEX/annotation, borrowed identity)
+// per-antigen fraction columns, RI/breadth, the matrices, optional annotation, borrowed identity)
 // lives in finalize.tpl.tengo.
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -25,7 +25,6 @@ self.awaitState("columns", "PColumnBundle")
 
 self.body(func(inputs) {
 	columns := inputs.columns
-	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
 
 	// Cell-linker resolution + grouping guard. The linker is resolved as a MULTI query in
@@ -95,13 +94,6 @@ self.body(func(inputs) {
 		}
 	}
 
-	if hasGex {
-		gexCsvFile := buildCellCsv(columns.getColumn(inputs.gexColumnId), "count", ["sampleId", "cellId", "geneId"])
-		run = run.addFile("gex.csv", gexCsvFile).
-			arg("--gex-csv").arg("gex.csv").
-			arg("--expression-method").arg(inputs.expressionMethod)
-	}
-
 	// annotations (0..N): one per-cell CSV each + a JSON manifest {csv, key, dominance} the Python loops
 	// over, so every annotation is folded on independently (not just the first).
 	if hasAnnotation {
@@ -117,7 +109,7 @@ self.body(func(inputs) {
 
 	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
 	// wide) + UMI count matrices, the feature-names list (as content, read in finalize), and — when
-	// selected — the GEX / annotation CSVs.
+	// selected — the annotation CSVs.
 	// feature-names + annotation-values are always emitted (empty when the corresponding input is absent);
 	// the feature matrices / properties CSVs only when a feature is integrated.
 	run = run.
@@ -130,9 +122,6 @@ self.body(func(inputs) {
 			saveFile("result_fractions_wide.csv").
 			saveFile("result_counts.csv")
 	}
-	if hasGex {
-		run = run.saveFile("result_expression.csv")
-	}
 	if hasAnnotation {
 		run = run.
 			saveFile("result_annotations_wide.csv").
@@ -142,7 +131,7 @@ self.body(func(inputs) {
 
 	// Return the run's output files (resources). main.tpl.tengo forwards these to finalize together with
 	// the unresolved bundle. featureNames is content (read as a value in finalize); the rest are files
-	// consumed by xsv.importFile there. The GEX / annotation files are added only when those inputs are
+	// consumed by xsv.importFile there. The annotation files are added only when those inputs are
 	// present: a template output field cannot be assigned undefined.
 	result := {
 		featureNames: run.getFileContent("result_feature_names.json"),
@@ -153,9 +142,6 @@ self.body(func(inputs) {
 		result.fractionsLongFile = run.getFile("result_fractions.csv")
 		result.fractionsWideFile = run.getFile("result_fractions_wide.csv")
 		result.countsFile = run.getFile("result_counts.csv")
-	}
-	if hasGex {
-		result.expressionFile = run.getFile("result_expression.csv")
 	}
 	if hasAnnotation {
 		result.annotationsWideFile = run.getFile("result_annotations_wide.csv")

@@ -179,7 +179,6 @@ export const platforma = BlockModelV3.create(dataModel)
       featureDominanceThreshold: dom(feature),
       annotations,
       presenceThreshold,
-      expressionMethod: "mean",
       // Block label -> workflow trace label (finalize). Changing it re-runs so the new label is baked
       // into the exported columns' provenance.
       customBlockLabel: data.customBlockLabel ?? "",
@@ -246,8 +245,8 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   // Graph frames, split by axis structure. A GraphMaker chart tabulates its whole PFrame into one
   // PTable, so a frame must be axis-homogeneous: the [scClonotypeKey, featureId] matrix feeds the
-  // property heatmap; the [scClonotypeKey] scalars feed the distribution histogram. Mixing axes (or the
-  // [scClonotypeKey, geneId] expression column) in one frame has no valid join.
+  // property heatmap; the [scClonotypeKey] scalars feed the distribution histogram. Mixing axes in one
+  // frame has no valid join.
   //
   // Source columns from the exportFrame'd `clonotypeTable` output, NOT the raw `propertiesPf`: only the
   // exportFrame'd frame materializes the column blobs, so ctx.createPFrame can read their blob info.

@@ -7,11 +7,10 @@ The math functions are ported verbatim from the clonotype-distribution block's c
 alongside the dominant-category rule; they are pure and unit-tested. Every output is sorted before
 writing for determinism + workflow canonicality.
 
-Per-antigen presence cutoff: a feature is "present"/bound for a clonotype when its within-clonotype
-fraction exceeds that feature's presence threshold (a per-antigen map, falling back to a global
-default). Breadth counts present features, and the dominant-antigen call is made over the present
-features only. Restriction index is left over every nonzero feature (it measures raw concentration,
-not thresholded presence).
+Presence cutoff: a feature is "present"/bound for a clonotype when its within-clonotype fraction
+exceeds the global presence threshold (applied to every feature). Breadth counts present features,
+and the dominant-antigen call is made over the present features only. Restriction index is left over
+every nonzero feature (it measures raw concentration, not thresholded presence).
 """
 
 import argparse
@@ -54,19 +53,14 @@ def breadth(counts: list[float], presence_threshold: float = 0.0) -> int:
     return sum(1 for c in counts if (c / total) > presence_threshold)
 
 
-def present_features(
-    per_feature: dict[str, float],
-    thresholds: dict[str, float],
-    default_threshold: float,
-) -> dict[str, float]:
-    """The subset of per-feature counts whose within-clonotype fraction is strictly greater than that
-    feature's presence threshold (per-antigen map, falling back to default_threshold). Returns the
-    surviving {feature: count}; empty when there is no signal. This is the set breadth counts and the
-    set the dominant-antigen call is made over."""
+def present_features(per_feature: dict[str, float], threshold: float) -> dict[str, float]:
+    """The subset of per-feature counts whose within-clonotype fraction is strictly greater than the
+    presence threshold (applied to every feature). Returns the surviving {feature: count}; empty when
+    there is no signal. This is the set breadth counts and the set the dominant-antigen call is made over."""
     total = sum(c for c in per_feature.values() if c > 0)
     if total <= 0:
         return {}
-    return {f: c for f, c in per_feature.items() if c > 0 and (c / total) > thresholds.get(f, default_threshold)}
+    return {f: c for f, c in per_feature.items() if c > 0 and (c / total) > threshold}
 
 
 def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
@@ -82,15 +76,6 @@ def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
     if len(winners) == 1 and (max_val / total) >= threshold:
         return winners[0]
     return "ambiguous"
-
-
-def _load_presence_thresholds(spec: str | None) -> dict[str, float]:
-    """Parse the optional per-antigen presence-threshold map (inline JSON object feature -> threshold).
-    Absent or empty -> {}, so every feature falls back to the global --presence-threshold default."""
-    if spec is None or spec == "":
-        return {}
-    raw = json.loads(spec)
-    return {str(k): float(v) for k, v in raw.items()}
 
 
 def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.DataFrame:
@@ -119,7 +104,6 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--feature-csv", default=None)
     p.add_argument("--linker-csv", required=True)
-    p.add_argument("--gex-csv", default=None)
     p.add_argument(
         "--annotations",
         default=None,
@@ -128,17 +112,8 @@ def main() -> None:
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--dominance-threshold-feature", type=float, default=None)
     p.add_argument("--presence-threshold", type=float, default=0.0)
-    p.add_argument(
-        "--presence-thresholds",
-        default=None,
-        help="Optional inline JSON: per-antigen presence-threshold map {feature: threshold}. Features "
-        "not listed fall back to --presence-threshold.",
-    )
-    p.add_argument("--expression-method", choices=["mean", "max"], default="mean")
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
-
-    presence_thresholds = _load_presence_thresholds(args.presence_thresholds)
 
     # Feature dominance threshold, falling back to the shared --dominance-threshold. Each annotation
     # carries its own dominance in the --annotations manifest.
@@ -205,7 +180,7 @@ def main() -> None:
         for (clono,), grp in cf.group_by(["scClonotypeKey"]):
             counts = grp["count"].to_list()
             per_feature = dict(zip(grp["feature"].to_list(), counts))
-            present = present_features(per_feature, presence_thresholds, args.presence_threshold)
+            present = present_features(per_feature, args.presence_threshold)
             prop_rows.append(
                 {
                     "scClonotypeKey": clono,
@@ -229,20 +204,6 @@ def main() -> None:
     # and the per-antigen fraction columns downstream.
     with open(f"{args.output_prefix}_feature_names.json", "w") as f:
         json.dump(feature_names, f)
-
-    # optional GEX: mean/max per (clonotype, gene)
-    if args.gex_csv is not None:
-        gex = pl.read_csv(
-            args.gex_csv,
-            schema_overrides={"sampleId": pl.String, "cellId": pl.String, "geneId": pl.String},
-        ).join(linker, on=["sampleId", "cellId"], how="inner")
-        agg = pl.col("count").mean() if args.expression_method == "mean" else pl.col("count").max()
-        (
-            gex.group_by(["scClonotypeKey", "geneId"])
-            .agg(agg.alias("expression"))
-            .sort(["scClonotypeKey", "geneId"])
-            .write_csv(f"{args.output_prefix}_expression.csv")
-        )
 
     # annotations (0..N): each folds onto clonotypes by the dominant-category rule with its own dominance
     # threshold. Emitted as one wide CSV (a dominant column per annotation key, keyed [scClonotypeKey]) plus
