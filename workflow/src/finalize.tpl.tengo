@@ -65,6 +65,9 @@ self.body(func(inputs) {
 	addDisplayOnly := func(k, spec, data) {
 		fbDisplay.add(k, spec, data)
 	}
+	addExportOnly := func(k, spec, data) {
+		fbExport.add(k, spec, data)
+	}
 	// import a result CSV and inject its columns via addFn (addOwn = both frames; addDisplayOnly = display).
 	importAndInject := func(file, importAxes, importColumns, addFn) {
 		rawPf := xsv.importFile(file, "csv", {
@@ -189,6 +192,20 @@ self.body(func(inputs) {
 			})
 		}
 		importAndInject(inputs.fractionsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], perAntigenCols, addOwn)
+	}
+
+	// Per-feature property columns discovered in main.tpl.tengo (Feature Integration's extra tag-CSV
+	// columns — e.g. antigen species human / cyno — keyed on the feature axis, name pl7.app/feature/property,
+	// domain { pl7.app/feature/propertyName }). Re-emitted VERBATIM (the source spec, incl. isDiscreteFilter +
+	// discreteValues + label) onto the EXPORT frame only, keyed on the SAME featureId axis as the feature
+	// count / fraction matrices above, so downstream Lead Selection joins each property to the per-feature
+	// counts and can group / filter features by it (all human vs all cyno — A-0015). Export-only, NOT the
+	// display frame: a [featureId]-only column would otherwise be a candidate for the in-block per-clonotype
+	// table's value anchor. Only VDJM's own trace step is appended (provenance); identity is unchanged.
+	// Empty-safe: no matching property columns -> the loop adds nothing.
+	for prop in columns.getColumns("featureProperties") {
+		propName := prop.spec.domain["pl7.app/feature/propertyName"]
+		addExportOnly("featureProperty_" + strings.substituteSpecialCharacters(propName), trace.inject(prop.spec), prop.data)
 	}
 	}
 
