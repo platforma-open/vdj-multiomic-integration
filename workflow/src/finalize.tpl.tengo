@@ -25,7 +25,6 @@ self.awaitState("annotationValues", "ResourceReady")
 self.body(func(inputs) {
 	columns := inputs.columns
 	hasFeature := inputs.hasFeature
-	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
 
 	// Distinct antigen names present (empty when no feature integration): the per-antigen fraction columns
@@ -191,28 +190,6 @@ self.body(func(inputs) {
 		}
 		importAndInject(inputs.fractionsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], perAntigenCols, addOwn)
 	}
-	}
-
-	// optional per-clonotype gene expression (clonotype x gene): mean/max across the clonotype's cells.
-	if hasGex {
-		gexSpec := columns.getSpec(inputs.gexColumnId)
-		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId
-		exprLabel := inputs.expressionMethod == "max" ? "Max expression" : "Mean expression"
-		importAndInject(inputs.expressionFile, [
-			{ column: "scClonotypeKey", spec: scAxis },
-			{ column: "geneId", spec: geneAxis }
-		], [{
-			column: "expression", id: "expression",
-			spec: {
-				name: "pl7.app/rna-seq/clonotypeExpression", valueType: "Double",
-				domain: { "pl7.app/feature/aggregation": inputs.expressionMethod },
-				annotations: {
-					"pl7.app/label": exprLabel,
-					"pl7.app/format": ".3f",
-					"pl7.app/table/visibility": "optional"
-				}
-			}
-		}], addOwn)
 	}
 
 	// per-clonotype dominant annotation, ONE column per annotation integration. Each is

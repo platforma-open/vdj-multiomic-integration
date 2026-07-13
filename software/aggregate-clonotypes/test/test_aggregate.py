@@ -68,26 +68,21 @@ def test_breadth_with_threshold():
     assert breadth([8.0, 2.0], presence_threshold=0.3) == 1
 
 
-# --- per-antigen presence cutoff (per-antigen threshold = presence/binding cutoff) ---
+# --- presence cutoff (global within-clonotype fraction threshold, applied to every feature) ---
 
 
 def test_present_features_default_keeps_all_nonzero():
-    # no per-antigen overrides, default 0.0 -> every nonzero feature survives
-    assert present_features({"A": 8, "B": 2}, {}, 0.0) == {"A": 8, "B": 2}
+    # threshold 0.0 -> every nonzero feature survives
+    assert present_features({"A": 8, "B": 2}, 0.0) == {"A": 8, "B": 2}
 
 
-def test_present_features_per_antigen_threshold_drops_below_cutoff():
-    # fractions A=0.8, B=0.2; B needs 0.3 -> B dropped, A (needs default 0.0) kept
-    assert present_features({"A": 8, "B": 2}, {"B": 0.3}, 0.0) == {"A": 8}
-
-
-def test_present_features_global_default_applies_when_unlisted():
-    # fractions 0.8/0.2; global default 0.25 -> only A survives
-    assert present_features({"A": 8, "B": 2}, {}, 0.25) == {"A": 8}
+def test_present_features_threshold_drops_below_cutoff():
+    # fractions 0.8/0.2; threshold 0.25 -> only A survives
+    assert present_features({"A": 8, "B": 2}, 0.25) == {"A": 8}
 
 
 def test_present_features_no_signal_is_empty():
-    assert present_features({"A": 0, "B": 0}, {}, 0.0) == {}
+    assert present_features({"A": 0, "B": 0}, 0.0) == {}
 
 
 # --- dominant category (reused) ---
@@ -215,12 +210,9 @@ def _run_cli(
     feature_rows,
     linker_rows,
     *,
-    gex_rows=None,
     annotation_rows=None,
     annotations=None,
-    expression_method=None,
     presence_threshold=None,
-    presence_thresholds=None,
 ):
     linker = tmp_path / "linker.csv"
     _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
@@ -239,14 +231,6 @@ def _run_cli(
         cmd += ["--feature-csv", str(feats)]
     if presence_threshold is not None:
         cmd += ["--presence-threshold", str(presence_threshold)]
-    if presence_thresholds is not None:
-        cmd += ["--presence-thresholds", json.dumps(presence_thresholds)]
-    if gex_rows is not None:
-        gex = tmp_path / "gex.csv"
-        _write_csv(gex, ["sampleId", "cellId", "geneId", "count"], gex_rows)
-        cmd += ["--gex-csv", str(gex)]
-        if expression_method is not None:
-            cmd += ["--expression-method", expression_method]
     # annotation manifest: `annotations` (list of (rows, dominance)) takes precedence; else the single
     # `annotation_rows` maps to one entry at dominance 0.6.
     ann_entries = (
@@ -437,50 +421,6 @@ def test_cli_no_feature_annotation_only(tmp_path):
     assert not (tmp_path / "result_fractions.csv").exists()
 
 
-# --- optional GEX branch: per-(clonotype, gene) mean/max expression ---
-# NB these pin an intentional semantic: the mean is over the cells that CARRY a count for the gene
-# (a sparse count matrix), not over every cell in the clonotype. C1/geneY below = mean(2) = 2.0, NOT
-# mean(2, 0) = 1.0 — geneY has no row for cB, and no zero is imputed.
-
-
-@pytest.mark.slow
-def test_cli_gex_mean_expression(tmp_path):
-    _run_cli(
-        tmp_path,
-        feature_rows=[("s1", "cA", "AGX", 5), ("s1", "cB", "AGX", 5), ("s1", "cD", "AGX", 5)],
-        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cD", "C2")],
-        gex_rows=[
-            ("s1", "cA", "geneX", 4),
-            ("s1", "cB", "geneX", 8),
-            ("s1", "cA", "geneY", 2),
-            ("s1", "cD", "geneX", 10),
-        ],
-        expression_method="mean",
-    )
-    with open(tmp_path / "result_expression.csv", newline="") as f:
-        rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
-    assert rows == {("C1", "geneX"): 6.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
-
-
-@pytest.mark.slow
-def test_cli_gex_max_expression(tmp_path):
-    _run_cli(
-        tmp_path,
-        feature_rows=[("s1", "cA", "AGX", 5), ("s1", "cB", "AGX", 5), ("s1", "cD", "AGX", 5)],
-        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cD", "C2")],
-        gex_rows=[
-            ("s1", "cA", "geneX", 4),
-            ("s1", "cB", "geneX", 8),
-            ("s1", "cA", "geneY", 2),
-            ("s1", "cD", "geneX", 10),
-        ],
-        expression_method="max",
-    )
-    with open(tmp_path / "result_expression.csv", newline="") as f:
-        rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
-    assert rows == {("C1", "geneX"): 8.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
-
-
 # --- per-antigen fraction columns + feature-names output (one fraction pcolumn per antigen) ---
 
 
@@ -508,18 +448,18 @@ def test_cli_wide_fractions_and_feature_names(tmp_path):
 
 
 @pytest.mark.slow
-def test_cli_per_antigen_presence_threshold(tmp_path):
-    # C1: AGX 8 (0.8), BGX 2 (0.2). A per-antigen cutoff of 0.3 on BGX drops it from "present":
+def test_cli_global_presence_threshold(tmp_path):
+    # C1: AGX 8 (0.8), BGX 2 (0.2). A global cutoff of 0.3 drops BGX from "present":
     # breadth 2 -> 1, and the dominant call is made over surviving {AGX} -> AGX at 100%.
     _run_cli(
         tmp_path,
         feature_rows=[("s1", "cA", "AGX", 8), ("s1", "cA", "BGX", 2)],
         linker_rows=[("s1", "cA", "C1")],
-        presence_thresholds={"BGX": 0.3},
+        presence_threshold=0.3,
     )
     with open(tmp_path / "result_properties.csv", newline="") as f:
         row = next(csv.DictReader(f))
-    assert int(row["breadth"]) == 1  # only AGX survives its cutoff
+    assert int(row["breadth"]) == 1  # only AGX clears the cutoff
     assert row["dominantFeature"] == "AGX"
     # The raw per-antigen fractions are unaffected by the presence cutoff (they report real signal).
     with open(tmp_path / "result_fractions_wide.csv", newline="") as f:
