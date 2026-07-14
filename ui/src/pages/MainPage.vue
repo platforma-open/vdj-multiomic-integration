@@ -195,7 +195,9 @@ const tableSettings = usePlDataTableSettingsV2({
             >
               <template #tooltip>
                 Minimum within-clonotype fraction for a feature to count as bound, applied to every
-                feature. Feeds breadth and the dominant call. 0 = any signal counts.
+                feature. Feeds breadth and the dominant call. 0 = any signal counts; raise it to
+                require stronger, more consistent binding across the clonotype's cells before a
+                feature is counted.
               </template>
             </PlNumberField>
             <PlNumberField
@@ -208,7 +210,9 @@ const tableSettings = usePlDataTableSettingsV2({
             >
               <template #tooltip>
                 Minimum share the top {{ item.kind === "feature" ? "feature" : "category" }} must
-                reach to be this clonotype's dominant call; below it it is "ambiguous". Floor 0.5.
+                reach to be this clonotype's dominant call; below it it is "ambiguous". Raise it for
+                stricter, cleaner calls; lower it toward the 0.5 floor to still call clonotypes with
+                more mixed signal.
               </template>
             </PlNumberField>
             <!--
