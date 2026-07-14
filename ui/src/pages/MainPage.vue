@@ -211,32 +211,39 @@ const tableSettings = usePlDataTableSettingsV2({
                 reach to be this clonotype's dominant call; below it it is "ambiguous". Floor 0.5.
               </template>
             </PlNumberField>
-            <PlDropdown
-              v-if="item.kind === 'feature'"
-              :model-value="item.offtargetProperty"
-              :options="offtargetPropertyDropdownOptions"
-              label="Off-target property"
-              clearable
-              @update:model-value="(v) => setOfftargetProperty(item.id, v)"
-            >
-              <template #tooltip>
-                Optional. Pick an imported per-feature property (e.g. antigen type) that marks
-                features as on- or off-target, then choose the off-target values below. Off-target
-                features drop out of the dominant call, and cross-reactive on-target binders get a
-                "cross-reactive" label instead of "ambiguous".
-              </template>
-            </PlDropdown>
-            <PlDropdownMulti
-              v-if="item.kind === 'feature' && item.offtargetProperty"
-              :model-value="item.offtargetValues ?? []"
-              :options="offtargetValueOptions(item.offtargetProperty)"
-              label="Off-target values"
-              @update:model-value="(v) => patchIntegration(item.id, { offtargetValues: v })"
-            >
-              <template #tooltip>
-                Property values that mark a feature as off-target (e.g. "Off-Target", "Decoy").
-              </template>
-            </PlDropdownMulti>
+            <!--
+              Type-aware off-target call + "cross-reactive" label — promised as a future release, not
+              delivered today. Hidden via v-if="false"; the F2 logic stays dormant (no designation →
+              pre-F2 dominant call, no "cross-reactive"). Re-enable by removing the wrapper. MILAB-6496.
+            -->
+            <template v-if="false">
+              <PlDropdown
+                v-if="item.kind === 'feature'"
+                :model-value="item.offtargetProperty"
+                :options="offtargetPropertyDropdownOptions"
+                label="Off-target property"
+                clearable
+                @update:model-value="(v) => setOfftargetProperty(item.id, v)"
+              >
+                <template #tooltip>
+                  Optional. Pick an imported per-feature property (e.g. antigen type) that marks
+                  features as on- or off-target, then choose the off-target values below. Off-target
+                  features drop out of the dominant call, and cross-reactive on-target binders get a
+                  "cross-reactive" label instead of "ambiguous".
+                </template>
+              </PlDropdown>
+              <PlDropdownMulti
+                v-if="item.kind === 'feature' && item.offtargetProperty"
+                :model-value="item.offtargetValues ?? []"
+                :options="offtargetValueOptions(item.offtargetProperty)"
+                label="Off-target values"
+                @update:model-value="(v) => patchIntegration(item.id, { offtargetValues: v })"
+              >
+                <template #tooltip>
+                  Property values that mark a feature as off-target (e.g. "Off-Target", "Decoy").
+                </template>
+              </PlDropdownMulti>
+            </template>
           </template>
         </template>
       </PlElementList>
