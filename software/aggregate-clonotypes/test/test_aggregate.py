@@ -15,7 +15,14 @@ import sys
 
 import numpy as np
 import pytest
-from aggregate_clonotypes import breadth, dominant_category, present_features, restriction_index
+from aggregate_clonotypes import (
+    CROSS_REACTIVE,
+    breadth,
+    dominant_category,
+    feature_breakdown,
+    present_features,
+    restriction_index,
+)
 from compartment_ref import restriction_index as ref_restriction_index
 from hypothesis import given
 from hypothesis import strategies as st
@@ -102,6 +109,71 @@ def test_dominant_exact_split_floor():
 
 def test_dominant_none():
     assert dominant_category({"A": 0}, 0.6) is None
+
+
+# --- off-target-aware dominant call + cross-reactive label (F2, mirrors FI consensus_category) ---
+
+
+def test_dominant_excludes_offtargets():
+    # Off-target excluded from winners, kept in denominator: AGX 3 / OT 5 -> 3/8 < 0.6 -> ambiguous.
+    assert dominant_category({"AGX": 3, "OT": 5}, 0.6, offtargets=frozenset({"OT"})) == "ambiguous"
+
+
+def test_dominant_offtarget_single_ontarget_wins():
+    assert dominant_category({"AGX": 7, "OT": 2}, 0.6, offtargets=frozenset({"OT"})) == "AGX"
+
+
+def test_dominant_crossreactive_two_targets():
+    # human+cyno split 45/45, OT 10 -> on-target set 90% across 2 targets -> cross-reactive.
+    assert (
+        dominant_category(
+            {"TgtA_human": 45, "TgtA_cyno": 45, "OT": 10},
+            0.6,
+            offtargets=frozenset({"OT"}),
+            label_crossreactive=True,
+        )
+        == CROSS_REACTIVE
+    )
+
+
+def test_dominant_crossreactive_needs_label():
+    assert (
+        dominant_category({"TgtA_human": 45, "TgtA_cyno": 45, "OT": 10}, 0.6, offtargets=frozenset({"OT"}))
+        == "ambiguous"
+    )
+
+
+def test_dominant_offtarget_swamped_is_ambiguous():
+    # On-target set 40% (< 0.6), OT swamps -> ambiguous, never cross-reactive.
+    assert (
+        dominant_category(
+            {"TgtA": 20, "TgtB": 20, "OT": 60},
+            0.6,
+            offtargets=frozenset({"OT"}),
+            label_crossreactive=True,
+        )
+        == "ambiguous"
+    )
+
+
+# --- per-clonotype feature breakdown string (F2) ---
+
+
+def test_feature_breakdown_sorted_desc_with_percents():
+    # 61% / 34% / 5% -> dominant first, whole percents.
+    s = feature_breakdown({"TgtA_human": 61, "TgtA_cyno": 34, "OT": 5})
+    assert s == "TgtA_human (61%)  •  TgtA_cyno (34%)  •  OT (5%)"
+
+
+def test_feature_breakdown_tiny_fraction_is_lt1():
+    # a nonzero feature rounding below 1% shows "<1%", not "0%".
+    s = feature_breakdown({"A": 999, "B": 1})
+    assert "B (<1%)" in s and s.startswith("A (")
+
+
+def test_feature_breakdown_empty_when_no_signal():
+    assert feature_breakdown({"A": 0}) == ""
+    assert feature_breakdown({}) == ""
 
 
 # --- properties (invariants that hold for ALL valid inputs) ---
@@ -213,6 +285,7 @@ def _run_cli(
     annotation_rows=None,
     annotations=None,
     presence_threshold=None,
+    offtarget_features=None,
 ):
     linker = tmp_path / "linker.csv"
     _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
@@ -231,6 +304,8 @@ def _run_cli(
         cmd += ["--feature-csv", str(feats)]
     if presence_threshold is not None:
         cmd += ["--presence-threshold", str(presence_threshold)]
+    if offtarget_features is not None:
+        cmd += ["--offtarget-features", offtarget_features]
     # annotation manifest: `annotations` (list of (rows, dominance)) takes precedence; else the single
     # `annotation_rows` maps to one entry at dominance 0.6.
     ann_entries = (
@@ -267,7 +342,13 @@ def test_cli_disjoint_join_emits_empty_not_crash(tmp_path):
         fieldnames = reader.fieldnames
         rows = list(reader)
     assert rows == []  # header present, zero data rows
-    assert set(fieldnames) == {"scClonotypeKey", "restrictionIndex", "breadth", "dominantFeature"}
+    assert set(fieldnames) == {
+        "scClonotypeKey",
+        "restrictionIndex",
+        "breadth",
+        "dominantFeature",
+        "featureBreakdown",
+    }
 
 
 @pytest.mark.slow
@@ -445,6 +526,34 @@ def test_cli_wide_fractions_and_feature_names(tmp_path):
     assert float(rows["C1"]["BGX"]) == pytest.approx(0.2)
     assert float(rows["C2"]["AGX"]) == pytest.approx(1.0)
     assert float(rows["C2"]["BGX"]) == pytest.approx(0.0)  # no BGX signal -> 0, not missing
+
+
+@pytest.mark.slow
+def test_cli_offtarget_dominant_and_breakdown(tmp_path):
+    # F2 end-to-end: with --offtarget-features the dominant call excludes off-targets and labels an
+    # on-target split as cross-reactive; the featureBreakdown string lists every feature dominant-first.
+    # C1: TgtA_human 45 + TgtA_cyno 45 + OT 10 (one cell each, same clonotype) -> cross-reactive.
+    # C2: TgtA_human 80 + OT 20 -> single on-target wins.
+    _run_cli(
+        tmp_path,
+        feature_rows=[
+            ("s1", "cA", "TgtA_human", 45),
+            ("s1", "cA", "TgtA_cyno", 45),
+            ("s1", "cA", "OT", 10),
+            ("s1", "cB", "TgtA_human", 80),
+            ("s1", "cB", "OT", 20),
+        ],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C2")],
+        offtarget_features="OT,Decoy1",
+    )
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r for r in csv.DictReader(f)}
+    assert rows["C1"]["dominantFeature"] == CROSS_REACTIVE
+    assert rows["C2"]["dominantFeature"] == "TgtA_human"
+    # breakdown lists every feature (incl. off-target), dominant first, whole percents.
+    # 45/45 tie broken by name ascending (cyno before human); OT last.
+    assert rows["C1"]["featureBreakdown"] == "TgtA_cyno (45%)  •  TgtA_human (45%)  •  OT (10%)"
+    assert rows["C2"]["featureBreakdown"] == "TgtA_human (80%)  •  OT (20%)"
 
 
 @pytest.mark.slow
