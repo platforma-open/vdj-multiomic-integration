@@ -63,19 +63,58 @@ def present_features(per_feature: dict[str, float], threshold: float) -> dict[st
     return {f: c for f, c in per_feature.items() if c > 0 and (c / total) > threshold}
 
 
-def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
+CROSS_REACTIVE = "cross-reactive"
+
+
+def dominant_category(
+    counts: dict[str, float],
+    threshold: float,
+    offtargets: frozenset[str] = frozenset(),
+    label_crossreactive: bool = False,
+) -> str | None:
     """Dominant-category rule: unique max with share >= threshold, else 'ambiguous'
-    when signal exists, else None. threshold clamped up to the 0.5 floor."""
+    when signal exists, else None. threshold clamped up to the 0.5 floor.
+
+    ``offtargets`` (features whose Type property marks them Off-Target / Decoy) are excluded from the
+    winner candidates but kept in the denominator, so an off-target-dominated clonotype is "ambiguous",
+    never an off-target. When they are supplied and ``label_crossreactive`` is set, a clonotype whose
+    on-target signal collectively passes the threshold but is split across >= 2 on-target features is
+    "cross-reactive" (a genuine multi-/cross-reactive binder — e.g. a target's human + cyno variants)
+    rather than lumped into "ambiguous". With no off-targets designated the rule is unchanged. Mirrors
+    Feature Integration's consensus_category so the per-cell and per-clonotype calls agree."""
     threshold = max(threshold, DOMINANCE_FLOOR)
     positive = {k: v for k, v in counts.items() if v > 0}
     total = sum(positive.values())
     if total <= 0:
         return None
-    max_val = max(positive.values())
-    winners = [k for k, v in positive.items() if v == max_val]
+    candidates = {k: v for k, v in positive.items() if k not in offtargets}
+    if not candidates:
+        return "ambiguous"  # only off-target signal — no on-target to call
+    max_val = max(candidates.values())
+    winners = [k for k, v in candidates.items() if v == max_val]
     if len(winners) == 1 and (max_val / total) >= threshold:
         return winners[0]
+    if label_crossreactive and len(candidates) >= 2 and (sum(candidates.values()) / total) >= threshold:
+        return CROSS_REACTIVE
     return "ambiguous"
+
+
+def feature_breakdown(per_feature: dict[str, float]) -> str:
+    """A readable per-clonotype binding profile: every feature with signal as ``feature (fraction%)``,
+    bullet-separated and sorted by descending fraction (dominant feature first, name as tie-break).
+    Fractions display as whole percents, with "<1%" for a nonzero feature that rounds below 1%. Empty
+    string when the clonotype has no signal. Mirrors Feature Integration's per-cell featureSummary so
+    the breakdown reads the same at cell and clonotype level (the customer lead-selection ask)."""
+    positive = {k: v for k, v in per_feature.items() if v > 0}
+    total = sum(positive.values())
+    if total <= 0:
+        return ""
+    entries = []
+    for feat, cnt in sorted(positive.items(), key=lambda kv: (-kv[1], kv[0])):
+        pct = round(cnt / total * 100)
+        pct_str = "<1%" if pct == 0 else f"{pct}%"
+        entries.append(f"{feat} ({pct_str})")
+    return "  •  ".join(entries)
 
 
 def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.DataFrame:
@@ -112,8 +151,45 @@ def main() -> None:
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--dominance-threshold-feature", type=float, default=None)
     p.add_argument("--presence-threshold", type=float, default=0.0)
+    p.add_argument(
+        "--offtarget-features",
+        default=None,
+        help="comma-separated feature names designated off-target. Excluded from the dominant-feature "
+        "call (like a control) and, when present, enable the cross-reactive label.",
+    )
+    p.add_argument(
+        "--offtarget-property-csv",
+        default=None,
+        help="a (feature,value) CSV of the designated per-feature property; features whose value is in "
+        "--offtarget-values are resolved to the off-target set. The workflow exports the chosen feature-"
+        "property column here so the off-target designation is property-driven (like Feature Integration).",
+    )
+    p.add_argument(
+        "--offtarget-values",
+        default=None,
+        help="comma-separated values of the --offtarget-property-csv value column that mark a feature "
+        "as off-target (e.g. 'Off-Target,Decoy').",
+    )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
+
+    # Off-target feature set (F2). Two sources, unioned: an explicit --offtarget-features name list, and a
+    # property-driven resolution — a (feature,value) CSV of the chosen per-feature property, keeping only
+    # features whose value is in --offtarget-values. Off-targets are excluded from the dominant-feature
+    # call (kept in the denominator) and, when any exist, enable the cross-reactive label. Empty -> unchanged.
+    offtargets = (
+        set(f.strip() for f in args.offtarget_features.split(",") if f.strip()) if args.offtarget_features else set()
+    )
+    if (args.offtarget_property_csv is None) != (args.offtarget_values is None):
+        raise SystemExit("--offtarget-property-csv and --offtarget-values must be given together")
+    if args.offtarget_property_csv is not None:
+        wanted = {v.strip() for v in args.offtarget_values.split(",") if v.strip()}
+        prop = pl.read_csv(args.offtarget_property_csv, schema_overrides={"feature": pl.String, "value": pl.String})
+        offtargets |= set(
+            prop.filter(pl.col("value").str.strip_chars().is_in(list(wanted)))["feature"].str.strip_chars().to_list()
+        )
+    offtargets = frozenset(offtargets)
+    label_crossreactive = len(offtargets) > 0
 
     # Feature dominance threshold, falling back to the shared --dominance-threshold. Each annotation
     # carries its own dominance in the --annotations manifest.
@@ -186,7 +262,14 @@ def main() -> None:
                     "scClonotypeKey": clono,
                     "restrictionIndex": restriction_index(counts),
                     "breadth": len(present),
-                    "dominantFeature": dominant_category(present, feature_dominance),
+                    # off-target-aware dominant call (F2): off-targets excluded from winners; a clonotype
+                    # whose on-target signal is split across >= 2 targets is "cross-reactive".
+                    "dominantFeature": dominant_category(
+                        present, feature_dominance, offtargets=offtargets, label_crossreactive=label_crossreactive
+                    ),
+                    # readable per-clonotype binding profile (all features, dominant first) — mirrors FI's
+                    # per-cell featureSummary; the customer lead-selection breakdown ask.
+                    "featureBreakdown": feature_breakdown(per_feature),
                 }
             )
         _write_sorted(
@@ -196,6 +279,7 @@ def main() -> None:
                 "restrictionIndex": pl.Float64,
                 "breadth": pl.Int64,
                 "dominantFeature": pl.String,
+                "featureBreakdown": pl.String,
             },
             f"{args.output_prefix}_properties.csv",
         )

@@ -92,7 +92,13 @@ self.body(func(inputs) {
 	// Attribute the feature metrics to their source integration (e.g. "Antigens · Restriction index"), and
 	// order the antigen group together via orderPriority: dominant antigen, then restriction index, breadth.
 	featPrefix := inputs.featureLabel || "Antigens"
+	// discreteValues for the dominant-antigen multi-select: the present antigens + "ambiguous", plus
+	// "cross-reactive" when an off-target designation is active (F2) — the Python emits that label only
+	// then, so the filter offers it only when it can occur.
 	dominantValues := featureNames + ["ambiguous"]
+	if !is_undefined(inputs.offtargetActive) && inputs.offtargetActive {
+		dominantValues = dominantValues + ["cross-reactive"]
+	}
 	importAndInject(inputs.propertiesFile, [{ column: "scClonotypeKey", spec: scAxis }], [
 		{
 			column: "dominantFeature", id: "dom",
@@ -131,6 +137,20 @@ self.body(func(inputs) {
 					"pl7.app/table/orderPriority": "120",
 					"pl7.app/isScore": "true",
 					"pl7.app/score/rankingOrder": "decreasing"
+				}
+			}
+		},
+		{
+			// readable per-clonotype binding profile ("antigen (fraction%) • ..."), dominant first. The
+			// customer lead-selection ask (mirror of Feature Integration's per-cell featureSummary), so a
+			// winner can be read off the BEAM breakdown in the sequence browser without opening the table.
+			column: "featureBreakdown", id: "breakdown",
+			spec: {
+				name: "pl7.app/feature/featureBreakdown", valueType: "String",
+				annotations: {
+					"pl7.app/label": featPrefix + " · Feature breakdown",
+					"pl7.app/table/visibility": "default",
+					"pl7.app/table/orderPriority": "105"
 				}
 			}
 		}

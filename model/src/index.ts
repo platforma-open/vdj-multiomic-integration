@@ -179,6 +179,13 @@ export const platforma = BlockModelV3.create(dataModel)
       featureDominanceThreshold: dom(feature),
       annotations,
       presenceThreshold,
+      // Off-target designation (F2), carried on the feature card. Projected only when both are set, so the
+      // dominant-feature call is unchanged otherwise (the workflow leaves the rule alone on empty).
+      ...(feature?.offtargetProperty &&
+      feature.offtargetValues &&
+      feature.offtargetValues.length > 0
+        ? { offtargetProperty: feature.offtargetProperty, offtargetValues: feature.offtargetValues }
+        : {}),
       // Block label -> workflow trace label (finalize). Changing it re-runs so the new label is baked
       // into the exported columns' provenance.
       customBlockLabel: data.customBlockLabel ?? "",
@@ -207,6 +214,36 @@ export const platforma = BlockModelV3.create(dataModel)
     })),
     ...discoverAnnotationOptions(ctx).map((o) => ({ ...o, kind: "annotation" as const })),
   ])
+  // Off-target designation options (F2). Feature Integration imports every extra tag-CSV column as a
+  // per-feature property (pl7.app/feature/property), carrying the original header in the domain
+  // (pl7.app/feature/propertyName) and its distinct values in the pl7.app/discreteValues annotation. Read
+  // those from the pool SPECS (no data needed) so the UI can offer the property dropdown + a value
+  // multi-select for the off-target designation. Empty until a Feature Integration upstream has run.
+  .output(
+    "offtargetPropertyOptions",
+    (ctx): { propertyName: string; label: string; values: string[] }[] => {
+      const byProp = new Map<string, { label: string; values: string[] }>();
+      for (const entry of ctx.resultPool.getSpecs().entries) {
+        const spec = entry.obj;
+        if (!isPColumnSpec(spec) || spec.name !== "pl7.app/feature/property") continue;
+        const propName = spec.domain?.["pl7.app/feature/propertyName"];
+        if (!propName) continue;
+        const rawValues = spec.annotations?.["pl7.app/discreteValues"];
+        let values: string[] = [];
+        if (rawValues) {
+          const parsed = JSON.parse(rawValues);
+          if (Array.isArray(parsed)) values = parsed.map(String);
+        }
+        const label = spec.annotations?.["pl7.app/label"] ?? propName;
+        byProp.set(propName, { label, values });
+      }
+      return [...byProp.entries()].map(([propertyName, v]) => ({
+        propertyName,
+        label: v.label,
+        values: v.values,
+      }));
+    },
+  )
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback. The Python aggregation is a long-running (16 GiB) step.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)

@@ -70,6 +70,19 @@ wf.body(func(args) {
 
 	hasAnnotation := len(args.annotations) > 0
 
+	// Off-target designation (F2). The model gives offtargetProperty (an imported per-feature property, by
+	// its original header e.g. antigen_class) and offtargetValues (its values marking a feature off-target).
+	// aggregate exports the matching property column + resolves the off-target features; finalize appends
+	// "cross-reactive" to the dominant column's discreteValues when the designation is active. Join the value
+	// list into the comma-separated string the Python expects; "" for either -> feature off (unchanged call).
+	offtargetProperty := is_undefined(args.offtargetProperty) ? "" : args.offtargetProperty
+	offtargetValueList := is_undefined(args.offtargetValues) ? [] : args.offtargetValues
+	offtargetValues := ""
+	for i, v in offtargetValueList {
+		offtargetValues = i == 0 ? v : offtargetValues + "," + v
+	}
+	offtargetActive := hasFeature && offtargetProperty != "" && offtargetValues != ""
+
 	// Two ephemeral (not pure) steps. `aggregate` runs the Python (deterministic — it sorts every output)
 	// and returns the result files; `finalize` awaits the feature-names value + the bundle and builds
 	// every emitted column. Both take the SAME unresolved bundle reference (finalize cannot receive it
@@ -84,6 +97,8 @@ wf.body(func(args) {
 		annotations: args.annotations,
 		featureDominanceThreshold: args.featureDominanceThreshold,
 		presenceThreshold: args.presenceThreshold,
+		offtargetProperty: offtargetProperty,
+		offtargetValues: offtargetValues,
 		hasFeature: hasFeature,
 		hasAnnotation: hasAnnotation
 	})
@@ -104,6 +119,7 @@ wf.body(func(args) {
 		blockId: blockId,
 		customBlockLabel: args.customBlockLabel,
 		defaultBlockLabel: args.defaultBlockLabel,
+		offtargetActive: offtargetActive,
 		hasFeature: hasFeature,
 		hasAnnotation: hasAnnotation
 	})
