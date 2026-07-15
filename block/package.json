@@ -53,7 +53,8 @@
         "single-cell",
         "vdj",
         "clonotype",
-        "annotation"
+        "annotation",
+        "multiomics"
       ],
       "organization": {
         "name": "MiLaboratories Inc",
