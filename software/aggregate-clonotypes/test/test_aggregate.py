@@ -162,7 +162,7 @@ def test_dominant_offtarget_swamped_is_ambiguous():
 def test_feature_breakdown_sorted_desc_with_percents():
     # 61% / 34% / 5% -> dominant first, whole percents.
     s = feature_breakdown({"TgtA_human": 61, "TgtA_cyno": 34, "OT": 5})
-    assert s == "TgtA_human (61%)  •  TgtA_cyno (34%)  •  OT (5%)"
+    assert s == "TgtA_human (61%), TgtA_cyno (34%), OT (5%)"
 
 
 def test_feature_breakdown_tiny_fraction_is_lt1():
@@ -552,8 +552,8 @@ def test_cli_offtarget_dominant_and_breakdown(tmp_path):
     assert rows["C2"]["dominantFeature"] == "TgtA_human"
     # breakdown lists every feature (incl. off-target), dominant first, whole percents.
     # 45/45 tie broken by name ascending (cyno before human); OT last.
-    assert rows["C1"]["featureBreakdown"] == "TgtA_cyno (45%)  •  TgtA_human (45%)  •  OT (10%)"
-    assert rows["C2"]["featureBreakdown"] == "TgtA_human (80%)  •  OT (20%)"
+    assert rows["C1"]["featureBreakdown"] == "TgtA_cyno (45%), TgtA_human (45%), OT (10%)"
+    assert rows["C2"]["featureBreakdown"] == "TgtA_human (80%), OT (20%)"
 
 
 @pytest.mark.slow

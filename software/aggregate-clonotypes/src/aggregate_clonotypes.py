@@ -101,7 +101,7 @@ def dominant_category(
 
 def feature_breakdown(per_feature: dict[str, float]) -> str:
     """A readable per-clonotype binding profile: every feature with signal as ``feature (fraction%)``,
-    bullet-separated and sorted by descending fraction (dominant feature first, name as tie-break).
+    comma-separated and sorted by descending fraction (dominant feature first, name as tie-break).
     Fractions display as whole percents, with "<1%" for a nonzero feature that rounds below 1%. Empty
     string when the clonotype has no signal. Mirrors Feature Integration's per-cell featureSummary so
     the breakdown reads the same at cell and clonotype level (the customer lead-selection ask)."""
@@ -114,7 +114,7 @@ def feature_breakdown(per_feature: dict[str, float]) -> str:
         pct = round(cnt / total * 100)
         pct_str = "<1%" if pct == 0 else f"{pct}%"
         entries.append(f"{feat} ({pct_str})")
-    return "  •  ".join(entries)
+    return ", ".join(entries)
 
 
 def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.DataFrame:

@@ -89,7 +89,7 @@ self.body(func(inputs) {
 	// per-clonotype properties: dominant antigen (categorical) + restriction index / breadth
 	// (numerical scores). The dominant antigen carries discreteValues (the present antigens + "ambiguous")
 	// on top of isDiscreteFilter — Lead Selection's FilterCard requires BOTH to render a multi-select.
-	// Attribute the feature metrics to their source integration (e.g. "Antigens · Restriction index"), and
+	// Attribute the feature metrics to their source integration (e.g. "Antigens Restriction index"), and
 	// order the antigen group together via orderPriority: dominant antigen, then restriction index, breadth.
 	featPrefix := inputs.featureLabel || "Antigens"
 	// discreteValues for the dominant-antigen multi-select: the present antigens + "ambiguous", plus
@@ -105,7 +105,7 @@ self.body(func(inputs) {
 			spec: {
 				name: "pl7.app/feature/dominantFeature", valueType: "String",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Dominant feature",
+					"pl7.app/label": featPrefix + " Dominant feature",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": string(json.encode(dominantValues)),
 					"pl7.app/table/visibility": "default",
@@ -118,7 +118,7 @@ self.body(func(inputs) {
 			spec: {
 				name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Restriction index",
+					"pl7.app/label": featPrefix + " Restriction index",
 					"pl7.app/format": ".3f",
 					"pl7.app/table/visibility": "default",
 					"pl7.app/table/orderPriority": "110",
@@ -132,7 +132,7 @@ self.body(func(inputs) {
 			spec: {
 				name: "pl7.app/vdj/breadth", valueType: "Int",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Breadth",
+					"pl7.app/label": featPrefix + " Breadth",
 					"pl7.app/table/visibility": "optional",
 					"pl7.app/table/orderPriority": "120",
 					"pl7.app/isScore": "true",
@@ -141,14 +141,14 @@ self.body(func(inputs) {
 			}
 		},
 		{
-			// readable per-clonotype binding profile ("antigen (fraction%) • ..."), dominant first. The
+			// readable per-clonotype binding profile ("antigen (fraction%), ..."), dominant first. The
 			// customer lead-selection ask (mirror of Feature Integration's per-cell featureSummary), so a
 			// winner can be read off the BEAM breakdown in the sequence browser without opening the table.
 			column: "featureBreakdown", id: "breakdown",
 			spec: {
 				name: "pl7.app/feature/featureBreakdown", valueType: "String",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Feature breakdown",
+					"pl7.app/label": featPrefix + " Feature breakdown",
 					"pl7.app/table/visibility": "default",
 					"pl7.app/table/orderPriority": "105"
 				}
@@ -170,7 +170,7 @@ self.body(func(inputs) {
 		spec: {
 			name: "pl7.app/feature/clonotypeFraction", valueType: "Double",
 			annotations: {
-				"pl7.app/label": featPrefix + " · Feature fraction",
+				"pl7.app/label": featPrefix + " Feature fraction",
 				"pl7.app/format": ".3f",
 				"pl7.app/table/visibility": "default"
 			}
@@ -183,7 +183,7 @@ self.body(func(inputs) {
 		spec: {
 			name: "pl7.app/feature/clonotypeUmiCount", valueType: "Int",
 			annotations: {
-				"pl7.app/label": featPrefix + " · Feature UMI count",
+				"pl7.app/label": featPrefix + " Feature UMI count",
 				"pl7.app/table/visibility": "optional"
 			}
 		}
