@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration.ui
 
+## 1.1.1
+
+### Patch Changes
+
+- 64bffa8: SDK Update
+- Updated dependencies [64bffa8]
+  - @platforma-open/milaboratories.vdj-multiomic-integration.model@1.1.1
+
 ## 1.1.0
 
 ### Minor Changes
