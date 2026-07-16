@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration.workflow
 
+## 1.1.1
+
+### Patch Changes
+
+- 64bffa8: SDK Update
+
 ## 1.1.0
 
 ### Minor Changes
