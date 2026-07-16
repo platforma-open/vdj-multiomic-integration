@@ -5,12 +5,12 @@ import type {
   SUniversalPColumnId,
 } from "@platforma-sdk/model";
 import {
+  AccessorColumnsProvider,
   BlockModelV3,
   createPlDataTableStateV2,
   createPlDataTableV3,
   DataModelBuilder,
   isPColumnSpec,
-  OutputColumnProvider,
 } from "@platforma-sdk/model";
 import type { BlockArgs, BlockData } from "./types";
 
@@ -217,7 +217,7 @@ export const platforma = BlockModelV3.create(dataModel)
   // Use the self-contained discovery form of createPlDataTableV3 with `sources` scoped to our OWN
   // exported PFrame (mirrors feature-integration / 3d-structure-prediction). The array-columns form
   // runs discoverLabelColumnVariants, which enumerates the ENTIRE result pool to find axis labels and
-  // blocks forever on the upstream Samples&Data FASTQ File-dataset. `sources: [OutputColumnProvider(acc)]`
+  // blocks forever on the upstream Samples&Data FASTQ File-dataset. `sources: [AccessorColumnsProvider(acc)]`
   // confines column + label discovery to this block's columns; maxHops:0 disables linker traversal
   // since the PFrame is self-contained. retentive avoids blanking the grid on recompute; withStatus
   // feeds PlAgDataTableV2 the OutputWithStatus envelope. NB: under maxHops:0 the scClonotypeKey /
@@ -228,14 +228,15 @@ export const platforma = BlockModelV3.create(dataModel)
     (ctx) => {
       const acc = ctx.outputs?.resolve("clonotypeTable");
       if (acc === undefined) return undefined;
-      const snapshots = new OutputColumnProvider(acc).getAllColumns();
+      const snapshots = AccessorColumnsProvider(acc).getColumns();
       if (snapshots.length === 0) return undefined;
       // Anchor on any value-bearing column — discovery is axis-driven, only its axesSpec matters.
-      const anchorSpec = (snapshots.find((s) => s.spec.name !== "pl7.app/label") ?? snapshots[0])
-        .spec;
+      const anchorSpec = (
+        snapshots.find((s) => s.getSpec().name !== "pl7.app/label") ?? snapshots[0]
+      ).getSpec();
       return createPlDataTableV3(ctx, {
         columns: {
-          sources: [new OutputColumnProvider(acc)],
+          sources: [AccessorColumnsProvider(acc)],
           anchors: { main: anchorSpec },
           selector: { mode: "enrichment", maxHops: 0 },
         },
