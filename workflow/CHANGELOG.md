@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration.workflow
 
+## 1.1.2
+
+### Patch Changes
+
+- a5cf7dd: Release software
+- Updated dependencies [a5cf7dd]
+  - @platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes@1.1.1
+
 ## 1.1.1
 
 ### Patch Changes
