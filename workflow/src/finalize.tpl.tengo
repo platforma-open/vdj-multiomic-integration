@@ -141,7 +141,7 @@ self.body(func(inputs) {
 	]
 
 	// within-clonotype fraction MATRIX ([scClonotypeKey, featureId]) — DISPLAY ONLY. Drives the in-block
-	// property heatmap (x = feature axis). Not exported: Lead Selection consumes the per-antigen scalar
+	// property heatmap (x = feature axis). Exported: Lead Selection consumes the per-antigen scalar
 	// columns below instead (a 2-axis matrix is not a per-clonotype filter).
 	importAndInject(inputs.fractionsLongFile, matrixAxes, [{
 		column: "fraction", id: "clonotypeFraction",
@@ -153,7 +153,7 @@ self.body(func(inputs) {
 				"pl7.app/table/visibility": "default"
 			}
 		}
-	}], addDisplayOnly)
+	}], addOwn)
 
 	// advanced feature UMI-count matrix ([scClonotypeKey, featureId]) — display + export.
 	importAndInject(inputs.countsFile, matrixAxes, [{
