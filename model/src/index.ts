@@ -188,15 +188,12 @@ export const platforma = BlockModelV3.create(dataModel)
   })
   // VDJ single-cell dataset anchor: columns keyed on [sampleId, scClonotypeKey] flagged as anchors
   .output("datasetOptions", (ctx) =>
-    ctx.resultPool.getOptions(
-      [
-        {
-          axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
-          annotations: { "pl7.app/isAnchor": "true" },
-        },
-      ],
-      { refsWithEnrichments: true },
-    ),
+    ctx.resultPool.getOptions([
+      {
+        axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
+        annotations: { "pl7.app/isAnchor": "true" },
+      },
+    ]),
   )
   // The per-cell columns the user can add as integrations. Feature-kind is the featureId-axis UMI matrix
   // (one column carrying every feature); annotation-kind is any [sampleId, cellId] String column. Values
