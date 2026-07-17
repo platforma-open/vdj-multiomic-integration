@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration
 
+## 1.1.2
+
+### Patch Changes
+
+- a5cf7dd: Release software
+
 ## 1.1.1
 
 ### Patch Changes
