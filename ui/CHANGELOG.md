@@ -1,5 +1,12 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration.ui
 
+## 1.1.2
+
+### Patch Changes
+
+- Updated dependencies [cd34950]
+  - @platforma-open/milaboratories.vdj-multiomic-integration.model@1.1.2
+
 ## 1.1.1
 
 ### Patch Changes
