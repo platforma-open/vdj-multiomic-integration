@@ -1,0 +1,51 @@
+// Pure helpers for mapping a per-cell PColumn's axes onto the flat-CSV headers the aggregate Python
+// expects — BY SEMANTIC AXIS NAME, not by position.
+//
+// Why: VDJMI discovers per-cell annotation columns by SHAPE (any 2-axis String column carrying a
+// pl7.app/sc/cellId axis, in EITHER axis order — see model/src/index.ts discoverAnnotationOptions).
+// A positional header assignment (header[i] -> axesSpec[i]) mislabels a column whose axes come back
+// ordered [cellId, sampleId]: the cellId axis would be written under the "sampleId" header and vice
+// versa, so the Python's inner join on [sampleId, cellId] silently matches nothing. Matching each
+// header to the axis whose spec `name` equals the intended semantic name is order-robust and fails
+// loudly on a genuinely malformed column instead of joining to nothing.
+ll := import("@platforma-sdk/workflow-tengo:ll")
+
+// hasAxis reports whether axesSpec (a list of axis specs) contains an axis whose semantic `name`
+// equals `name`. Order-independent — this is what makes the header mapping robust to axis order.
+hasAxis := func(axesSpec, name) {
+	for _, ax in axesSpec {
+		if ax.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// axisNamesString renders the axis names of axesSpec as a comma-separated string, for diagnostics.
+axisNamesString := func(axesSpec) {
+	out := ""
+	for i, ax in axesSpec {
+		out = i == 0 ? ax.name : out + ", " + ax.name
+	}
+	return out
+}
+
+// validateAxisHeaderMap asserts that every semantic axis name referenced by `mapping` (an ordered
+// list of { name: <semantic axis name>, header: <CSV header> }) is present in the column's axesSpec,
+// panicking loudly — naming the column, the missing axis, and the axes actually present — if not.
+// It returns `mapping` unchanged so the caller can apply each entry via setAxisHeader (which itself
+// matches the override to an axis by name). Matching is BY NAME, never by position.
+validateAxisHeaderMap := func(axesSpec, colName, mapping) {
+	for _, entry in mapping {
+		if !hasAxis(axesSpec, entry.name) {
+			ll.panic("VDJ Multiomic Integration: per-cell column %s is missing the required axis %s (present axes: %s). Refusing to export a mislabeled CSV.", colName, entry.name, axisNamesString(axesSpec))
+		}
+	}
+	return mapping
+}
+
+export {
+	hasAxis: hasAxis,
+	axisNamesString: axisNamesString,
+	validateAxisHeaderMap: validateAxisHeaderMap
+}

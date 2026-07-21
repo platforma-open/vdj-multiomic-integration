@@ -36,9 +36,14 @@ function discoverLinkedOptions(
   }));
 }
 
-// Per-cell categorical annotation columns: a [sampleId, cellId] String PColumn. Discovered by shape,
-// not by name, so any annotation from the gene-expression pipeline is offered — not only cell type. The
-// block's own feature columns (pl7.app/feature/*) are excluded: those are integrated as features.
+// Per-cell categorical annotation columns: a 2-axis String PColumn carrying a pl7.app/sc/cellId axis.
+// Discovered by shape, not by name, so any annotation from the gene-expression pipeline is offered —
+// not only cell type. The block's own feature columns (pl7.app/feature/*) are excluded: those are
+// integrated as features. NB: the axis-order check is intentionally order-agnostic (`.some`), so a
+// column specced [cellId, sampleId] is admitted as well as [sampleId, cellId]. This is safe because the
+// per-cell CSV export in aggregate.tpl.tengo (buildCellCsv) maps axis headers BY SEMANTIC NAME, not by
+// position — a reversed-axis column still exports the cellId/sampleId columns under the right headers
+// and joins. Do NOT tighten this to a positional check without also revisiting that export.
 function discoverAnnotationOptions(
   ctx: RenderCtx<BlockArgs, BlockData>,
 ): { label: string; value: SUniversalPColumnId }[] {

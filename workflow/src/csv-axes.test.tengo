@@ -1,0 +1,40 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+csvAxes := import(":csv-axes")
+
+// Minimal axis-spec fixtures — hasAxis / validateAxisHeaderMap only read `.name`.
+_axesNormal := [{ name: "pl7.app/sampleId" }, { name: "pl7.app/sc/cellId" }]
+// The bug scenario: the model's shape-based discovery admits a [cellId, sampleId] column too.
+_axesReversed := [{ name: "pl7.app/sc/cellId" }, { name: "pl7.app/sampleId" }]
+
+_annMap := [
+	{ name: "pl7.app/sampleId", header: "sampleId" },
+	{ name: "pl7.app/sc/cellId", header: "cellId" }
+]
+
+// Axis presence is order-independent — the property the header mapping relies on.
+Test_hasAxis_isOrderIndependent := func() {
+	test.isTrue(csvAxes.hasAxis(_axesNormal, "pl7.app/sampleId"), "sampleId present in normal order")
+	test.isTrue(csvAxes.hasAxis(_axesNormal, "pl7.app/sc/cellId"), "cellId present in normal order")
+	test.isTrue(csvAxes.hasAxis(_axesReversed, "pl7.app/sampleId"), "sampleId present in reversed order")
+	test.isTrue(csvAxes.hasAxis(_axesReversed, "pl7.app/sc/cellId"), "cellId present in reversed order")
+	test.isFalse(csvAxes.hasAxis(_axesNormal, "pl7.app/vdj/scClonotypeKey"), "absent axis reported absent")
+}
+
+// The mapping is accepted (returned unchanged) for the normal axis order.
+Test_validateAxisHeaderMap_acceptsNormalOrder := func() {
+	test.isEqual(_annMap, csvAxes.validateAxisHeaderMap(_axesNormal, "test/annotation", _annMap),
+		"mapping returned unchanged for [sampleId, cellId]")
+}
+
+// The mapping is accepted (returned unchanged) for the REVERSED axis order — the fix: a
+// [cellId, sampleId] column no longer mislabels. setAxisHeader then binds each header to the axis of
+// the matching name, so the CSV joins. (End-to-end join is asserted in the VDJMI block test, Task 13.)
+Test_validateAxisHeaderMap_acceptsReversedOrder := func() {
+	test.isEqual(_annMap, csvAxes.validateAxisHeaderMap(_axesReversed, "test/annotation", _annMap),
+		"mapping returned unchanged for reversed [cellId, sampleId]")
+}
+
+Test_axisNamesString_joinsInOrder := func() {
+	test.isEqual("pl7.app/sc/cellId, pl7.app/sampleId", csvAxes.axisNamesString(_axesReversed),
+		"axis names joined comma-separated in spec order")
+}
