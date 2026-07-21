@@ -21,6 +21,7 @@ from aggregate_clonotypes import (
     dominant_category,
     feature_breakdown,
     present_features,
+    resolve_offtargets_from_csv,
     restriction_index,
 )
 from compartment_ref import restriction_index as ref_restriction_index
@@ -154,6 +155,41 @@ def test_dominant_offtarget_swamped_is_ambiguous():
         )
         == "ambiguous"
     )
+
+
+# --- off-target set resolution from the property CSV (case-insensitive value matching) ---
+
+
+def test_resolve_offtargets_from_csv_exact_match_unchanged(tmp_path):
+    # Exact-case designations resolve as before; returned feature names are verbatim from the CSV.
+    csv = tmp_path / "prop.csv"
+    csv.write_text(
+        "feature,value\nTgtA,Target\nDecoyX,Decoy\nOTx, Off-Target \n"  # whitespace tolerated (stripped)
+    )
+    got = resolve_offtargets_from_csv(str(csv), {"Off-Target", "Decoy"})
+    assert got == {"DecoyX", "OTx"}
+
+
+def test_resolve_offtargets_from_csv_case_insensitive(tmp_path):
+    # Real B043 panel: the Type/value column carries mixed casing of one designation ("Off-Target" AND
+    # "Off-target"). A user who selects one canonical value must catch every casing -> matching is case-
+    # AND whitespace-insensitive on both sides. Returned FEATURE names stay verbatim from the CSV.
+    csv = tmp_path / "prop.csv"
+    csv.write_text(
+        "feature,value\n"
+        "AgOffLower,off-target\n"  # all lowercase — the B043 duplicate casing
+        "AgOffSpaced, OFF-TARGET \n"  # different case + surrounding whitespace
+        "AgOn,Target\n"
+    )
+    got = resolve_offtargets_from_csv(str(csv), {"Off-Target"})
+    assert got == {"AgOffLower", "AgOffSpaced"}
+
+
+def test_dominant_offtarget_membership_case_insensitive():
+    # The --offtarget-features comma-list path feeds names straight into the offtargets set, matched
+    # against feature keys in dominant_category. A designation "off-target" (lowercase) must still exclude
+    # the "Off-Target" feature (mixed case) -> only "AGX" remains, 3/8 < 0.6 -> ambiguous. Verbatim keys.
+    assert dominant_category({"Off-Target": 5, "AGX": 3}, 0.6, offtargets=frozenset({"off-target"})) == "ambiguous"
 
 
 # --- per-clonotype feature breakdown string (F2) ---

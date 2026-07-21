@@ -77,7 +77,9 @@ def dominant_category(
 
     ``offtargets`` (features whose Type property marks them Off-Target / Decoy) are excluded from the
     winner candidates but kept in the denominator, so an off-target-dominated clonotype is "ambiguous",
-    never an off-target. When they are supplied and ``label_crossreactive`` is set, a clonotype whose
+    never an off-target. Membership is tested case- AND whitespace-insensitively (strip + lowercase on both
+    sides) so a designation catches every casing of a feature name; the returned winner stays verbatim.
+    When they are supplied and ``label_crossreactive`` is set, a clonotype whose
     on-target signal collectively passes the threshold but is split across >= 2 on-target features is
     "cross-reactive" (a genuine multi-/cross-reactive binder — e.g. a target's human + cyno variants)
     rather than lumped into "ambiguous". With no off-targets designated the rule is unchanged. Mirrors
@@ -87,7 +89,8 @@ def dominant_category(
     total = sum(positive.values())
     if total <= 0:
         return None
-    candidates = {k: v for k, v in positive.items() if k not in offtargets}
+    offtargets_norm = {o.strip().lower() for o in offtargets}
+    candidates = {k: v for k, v in positive.items() if k.strip().lower() not in offtargets_norm}
     if not candidates:
         return "ambiguous"  # only off-target signal — no on-target to call
     max_val = max(candidates.values())
@@ -127,6 +130,26 @@ def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.D
         .group_by(["scClonotypeKey", "feature"])
         .agg(pl.col("umiCount").sum().alias("count"))
         .filter(pl.col("count") > 0)
+    )
+
+
+def resolve_offtargets_from_csv(csv_path: str, wanted: set[str]) -> set[str]:
+    """Off-target FEATURE names resolved from a (feature,value) property CSV: the features whose ``value``
+    column entry is one of ``wanted``. The workflow exports the chosen per-feature property column here so
+    the off-target designation is property-driven (like Feature Integration).
+
+    Values are matched case- AND whitespace-insensitively (strip + lowercase on BOTH sides): real panels
+    (e.g. B043) carry mixed casing of one designation — ``Off-Target`` and ``Off-target`` in a single Type
+    column — so a user who selects one canonical value catches every casing. Polars has no ``casefold``, so
+    the in-engine ``to_lowercase`` is used (correct for the ASCII Target/Off-Target/Decoy designations),
+    the idiomatic equivalent of Feature Integration's Python-side ``casefold``. Only the value comparison
+    is normalised; the returned FEATURE names are verbatim (whitespace-trimmed) from the CSV."""
+    prop = pl.read_csv(csv_path, schema_overrides={"feature": pl.String, "value": pl.String})
+    wanted_norm = [w.strip().lower() for w in wanted]
+    return set(
+        prop.filter(pl.col("value").str.strip_chars().str.to_lowercase().is_in(wanted_norm))["feature"]
+        .str.strip_chars()
+        .to_list()
     )
 
 
@@ -184,10 +207,7 @@ def main() -> None:
         raise SystemExit("--offtarget-property-csv and --offtarget-values must be given together")
     if args.offtarget_property_csv is not None:
         wanted = {v.strip() for v in args.offtarget_values.split(",") if v.strip()}
-        prop = pl.read_csv(args.offtarget_property_csv, schema_overrides={"feature": pl.String, "value": pl.String})
-        offtargets |= set(
-            prop.filter(pl.col("value").str.strip_chars().is_in(list(wanted)))["feature"].str.strip_chars().to_list()
-        )
+        offtargets |= resolve_offtargets_from_csv(args.offtarget_property_csv, wanted)
     offtargets = frozenset(offtargets)
     label_crossreactive = len(offtargets) > 0
 
