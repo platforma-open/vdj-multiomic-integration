@@ -231,18 +231,37 @@ self.body(func(inputs) {
 
 	// per-clonotype dominant annotation, ONE column per annotation integration. Each is
 	// named and labeled from its source ("Dominant " + the source label, e.g. "Dominant Cell type",
-	// "Dominant Leiden Cluster Id"), distinguished by its source spec name in the domain, and carries its
+	// "Dominant Leiden Cluster Id"), distinguished by its source spec name AND source provenance in the
+	// domain (so two same-named sources don't collide in the pool — see the per-column note below), and carries its
 	// own discreteValues (present values + "ambiguous") for the downstream multi-select. Imported from the
 	// wide CSV whose columns are the manifest keys "ann0", "ann1", ...
 	if hasAnnotation {
 		annCols := []
 		for i, ann in inputs.annotations {
 			key := "ann" + string(i)
+			// Source provenance disambiguator. Two integrated annotations whose SOURCE columns share the
+			// same spec name would otherwise emit dominant columns with IDENTICAL pool identity
+			// (name + domain + axes) and collide in the exported clonotypeProperties frame that Lead
+			// Selection consumes (the in-frame id domAnn_0/domAnn_1 does NOT affect pool identity). Fold the
+			// source column's full domain into a NEW, additive domain key so same-named sources stay distinct,
+			// while the SAME source across re-runs yields the identical spec (pure-template dedup /
+			// idempotency). canonical.encode is a key-SORTED recursive JSON string, so it is byte-stable
+			// across runs (map iteration order is not) and it captures EVERY distinguishing domain key of the
+			// source — the block that produced it (pl7.app/blockId, when stamped) AND any per-column key
+			// (e.g. a cluster resolution). That guarantees: distinct source domain => distinct identity;
+			// identical source => identical identity — never an array index or run-order value. (Two sources
+			// that share name + domain but differ only in AXES are not disambiguated here, but that is not a
+			// realistic shape for [sampleId, cellId] per-cell annotation columns.)
+			srcSpec := columns.getSpec(ann.ref)
+			srcDomain := is_undefined(srcSpec.domain) ? {} : srcSpec.domain
 			annCols = append(annCols, {
 				column: key, id: "domAnn_" + string(i),
 				spec: {
 					name: "pl7.app/rna-seq/clonotypeDominantAnnotation", valueType: "String",
-					domain: { "pl7.app/rna-seq/annotationSource": columns.getSpec(ann.ref).name },
+					domain: {
+						"pl7.app/rna-seq/annotationSource": srcSpec.name,
+						"pl7.app/rna-seq/annotationSourceDomain": string(canonical.encode(srcDomain))
+					},
 					annotations: {
 						"pl7.app/label": "Dominant " + ann.label,
 						"pl7.app/isDiscreteFilter": "true",
