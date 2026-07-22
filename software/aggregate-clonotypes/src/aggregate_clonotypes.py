@@ -84,7 +84,9 @@ def dominant_category(
     on-target signal collectively passes the threshold but is split across >= 2 on-target features is
     "cross-reactive" (a genuine multi-/cross-reactive binder — e.g. a target's human + cyno variants)
     rather than lumped into "ambiguous". With no off-targets designated the rule is unchanged. Mirrors
-    Feature Integration's consensus_category so the per-cell and per-clonotype calls agree."""
+    the off-target / cross-reactive rule of Feature Integration's consensus_category; unlike FI it takes
+    no negative-control parameter, so a control-dominated clonotype is called with the control's own name
+    unless the control is also designated off-target."""
     threshold = max(threshold, DOMINANCE_FLOOR)
     positive = {k: v for k, v in counts.items() if v > 0}
     total = sum(positive.values())
@@ -218,9 +220,9 @@ def main() -> None:
         args.dominance_threshold_feature if args.dominance_threshold_feature is not None else args.dominance_threshold
     )
 
-    # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the GEX and
-    # annotation joins below; reading it a single time avoids re-parsing a per-cell table (one row per
-    # cell) up to three times in a 16 GiB run.
+    # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the annotation
+    # join below; reading it a single time avoids re-parsing a per-cell table (one row per cell) more
+    # than once in a 16 GiB run.
     # Force identifier / label columns to String: barcodes, sample ids and categorical labels (e.g.
     # Leiden cluster ids "0","1") look numeric to CSV type inference, which would coerce them to Int and
     # both break the String-typed dominant column and mismatch join keys across the per-cell tables.
