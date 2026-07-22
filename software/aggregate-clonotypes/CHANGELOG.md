@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes
 
+## 1.1.1
+
+### Patch Changes
+
+- a5cf7dd: Release software
+
 ## 1.1.0
 
 ### Minor Changes
