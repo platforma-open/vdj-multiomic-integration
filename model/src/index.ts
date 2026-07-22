@@ -36,9 +36,14 @@ function discoverLinkedOptions(
   }));
 }
 
-// Per-cell categorical annotation columns: a [sampleId, cellId] String PColumn. Discovered by shape,
-// not by name, so any annotation from the gene-expression pipeline is offered — not only cell type. The
-// block's own feature columns (pl7.app/feature/*) are excluded: those are integrated as features.
+// Per-cell categorical annotation columns: a 2-axis String PColumn carrying a pl7.app/sc/cellId axis.
+// Discovered by shape, not by name, so any annotation from the gene-expression pipeline is offered —
+// not only cell type. The block's own feature columns (pl7.app/feature/*) are excluded: those are
+// integrated as features. NB: the axis-order check is intentionally order-agnostic (`.some`), so a
+// column specced [cellId, sampleId] is admitted as well as [sampleId, cellId]. This is safe because the
+// per-cell CSV export in aggregate.tpl.tengo (buildCellCsv) maps axis headers BY SEMANTIC NAME, not by
+// position — a reversed-axis column still exports the cellId/sampleId columns under the right headers
+// and joins. Do NOT tighten this to a positional check without also revisiting that export.
 function discoverAnnotationOptions(
   ctx: RenderCtx<BlockArgs, BlockData>,
 ): { label: string; value: SUniversalPColumnId }[] {
@@ -179,7 +184,13 @@ export const platforma = BlockModelV3.create(dataModel)
       featureDominanceThreshold: dom(feature),
       annotations,
       presenceThreshold,
-      expressionMethod: "mean",
+      // Off-target designation (F2), carried on the feature card. Projected only when both are set, so the
+      // dominant-feature call is unchanged otherwise (the workflow leaves the rule alone on empty).
+      ...(feature?.offtargetProperty &&
+      feature.offtargetValues &&
+      feature.offtargetValues.length > 0
+        ? { offtargetProperty: feature.offtargetProperty, offtargetValues: feature.offtargetValues }
+        : {}),
       // Block label -> workflow trace label (finalize). Changing it re-runs so the new label is baked
       // into the exported columns' provenance.
       customBlockLabel: data.customBlockLabel ?? "",
@@ -205,6 +216,43 @@ export const platforma = BlockModelV3.create(dataModel)
     })),
     ...discoverAnnotationOptions(ctx).map((o) => ({ ...o, kind: "annotation" as const })),
   ])
+  // Off-target designation options (F2). Feature Integration imports every extra tag-CSV column as a
+  // per-feature property (pl7.app/feature/property), carrying the original header in the domain
+  // (pl7.app/feature/propertyName) and its distinct values in the pl7.app/discreteValues annotation. Read
+  // those from the pool SPECS (no data needed) so the UI can offer the property dropdown + a value
+  // multi-select for the off-target designation. Empty until a Feature Integration upstream has run.
+  .output(
+    "offtargetPropertyOptions",
+    (ctx): { propertyName: string; label: string; values: string[] }[] => {
+      const byProp = new Map<string, { label: string; values: string[] }>();
+      for (const entry of ctx.resultPool.getSpecs().entries) {
+        const spec = entry.obj;
+        if (!isPColumnSpec(spec) || spec.name !== "pl7.app/feature/property") continue;
+        const propName = spec.domain?.["pl7.app/feature/propertyName"];
+        if (!propName) continue;
+        const rawValues = spec.annotations?.["pl7.app/discreteValues"];
+        let values: string[] = [];
+        if (rawValues) {
+          // Boundary parse: discreteValues comes from another block's spec in the pool. A single
+          // malformed annotation must not throw and take down the whole options output (and with it
+          // the off-target dropdown for the block) — degrade that one property to no preset values.
+          try {
+            const parsed = JSON.parse(rawValues);
+            if (Array.isArray(parsed)) values = parsed.map(String);
+          } catch {
+            values = [];
+          }
+        }
+        const label = spec.annotations?.["pl7.app/label"] ?? propName;
+        byProp.set(propName, { label, values });
+      }
+      return [...byProp.entries()].map(([propertyName, v]) => ({
+        propertyName,
+        label: v.label,
+        values: v.values,
+      }));
+    },
+  )
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback. The Python aggregation is a long-running (16 GiB) step.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
@@ -244,8 +292,8 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   // Graph frames, split by axis structure. A GraphMaker chart tabulates its whole PFrame into one
   // PTable, so a frame must be axis-homogeneous: the [scClonotypeKey, featureId] matrix feeds the
-  // property heatmap; the [scClonotypeKey] scalars feed the distribution histogram. Mixing axes (or the
-  // [scClonotypeKey, geneId] expression column) in one frame has no valid join.
+  // property heatmap; the [scClonotypeKey] scalars feed the distribution histogram. Mixing axes in one
+  // frame has no valid join.
   //
   // Source columns from the exportFrame'd `clonotypeTable` output, NOT the raw `propertiesPf`: only the
   // exportFrame'd frame materializes the column blobs, so ctx.createPFrame can read their blob info.
@@ -276,7 +324,7 @@ export const platforma = BlockModelV3.create(dataModel)
       return undefined;
     }
   })
-  .title(() => "VDJ Multiomic Integration")
+  .title(() => "Clonotype Multiomic Integration")
   // Subtitle = the block label: the user's override, else the input-derived default (the selected
   // dataset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
   // VDJM instances are distinguishable both here and in downstream Lead Selection column labels.
