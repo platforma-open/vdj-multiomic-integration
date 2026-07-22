@@ -150,11 +150,7 @@ def resolve_offtargets_from_csv(csv_path: str, wanted: set[str]) -> set[str]:
     user's to choose). The returned FEATURE names are verbatim (whitespace-trimmed) from the CSV."""
     prop = pl.read_csv(csv_path, schema_overrides={"feature": pl.String, "value": pl.String})
     wanted_norm = [w.strip() for w in wanted]
-    return set(
-        prop.filter(pl.col("value").str.strip_chars().is_in(wanted_norm))["feature"]
-        .str.strip_chars()
-        .to_list()
-    )
+    return set(prop.filter(pl.col("value").str.strip_chars().is_in(wanted_norm))["feature"].str.strip_chars().to_list())
 
 
 def _write_sorted(rows: list[dict], schema: dict, out_path: str) -> None:
