@@ -12,7 +12,7 @@ Analysis / functionality:
 
 - Per-antigen fraction columns plus a per-clonotype dominant-antigen / breadth / restriction-index call and a per-clonotype antigen breakdown — each antigen fraction is its own rankable and filterable column at Lead Selection.
 - Discover Feature Barcode Profiling's per-feature property columns and carry them verbatim onto the per-clonotype export (`clonotypeProperties`, keyed on the shared feature axis), so Lead Selection can group and filter by property (for example human vs cyno antigens). Generic over an arbitrary number and naming of properties; a no-op when the panel carried no extra columns or no feature integration is present.
-- Off-target-aware dominant call plus a "cross-reactive" label, behind a future-release flag and hidden this pilot: with no designation set, output is unchanged.
+- Off-target-aware dominant call plus a "cross-reactive" label, off by default: the controls are exposed, but with no off-target designation set the output is unchanged.
 
 Housekeeping / UX:
 
