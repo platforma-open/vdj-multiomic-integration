@@ -1,5 +1,25 @@
 # @platforma-open/milaboratories.vdj-multiomic-integration.workflow
 
+## 1.1.3
+
+### Patch Changes
+
+- cd34950: Remove refsWithEnrichments so the block no longer goes stale when upstream blocks are reordered. Export the within-clonotype feature fraction matrix (clonotypeFraction) so it is available to downstream blocks (e.g. Graph Maker box plots).
+
+## 1.1.2
+
+### Patch Changes
+
+- a5cf7dd: Release software
+- Updated dependencies [a5cf7dd]
+  - @platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes@1.1.1
+
+## 1.1.1
+
+### Patch Changes
+
+- 64bffa8: SDK Update
+
 ## 1.1.0
 
 ### Minor Changes
