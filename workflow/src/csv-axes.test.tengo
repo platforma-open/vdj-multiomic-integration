@@ -28,7 +28,8 @@ Test_validateAxisHeaderMap_acceptsNormalOrder := func() {
 
 // The mapping is accepted (returned unchanged) for the REVERSED axis order — the fix: a
 // [cellId, sampleId] column no longer mislabels. setAxisHeader then binds each header to the axis of
-// the matching name, so the CSV joins. (End-to-end join is asserted in the VDJMI block test, Task 13.)
+// the matching name, so the CSV joins. (End-to-end join coverage is deferred to the block test,
+// MILAB-6323 — blocked by the block-CI "empty inputs" PermissionDenied-on-KV regression.)
 Test_validateAxisHeaderMap_acceptsReversedOrder := func() {
 	test.isEqual(_annMap, csvAxes.validateAxisHeaderMap(_axesReversed, "test/annotation", _annMap),
 		"mapping returned unchanged for reversed [cellId, sampleId]")
