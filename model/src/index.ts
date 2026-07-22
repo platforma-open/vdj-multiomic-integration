@@ -233,8 +233,15 @@ export const platforma = BlockModelV3.create(dataModel)
         const rawValues = spec.annotations?.["pl7.app/discreteValues"];
         let values: string[] = [];
         if (rawValues) {
-          const parsed = JSON.parse(rawValues);
-          if (Array.isArray(parsed)) values = parsed.map(String);
+          // Boundary parse: discreteValues comes from another block's spec in the pool. A single
+          // malformed annotation must not throw and take down the whole options output (and with it
+          // the off-target dropdown for the block) — degrade that one property to no preset values.
+          try {
+            const parsed = JSON.parse(rawValues);
+            if (Array.isArray(parsed)) values = parsed.map(String);
+          } catch {
+            values = [];
+          }
         }
         const label = spec.annotations?.["pl7.app/label"] ?? propName;
         byProp.set(propName, { label, values });
