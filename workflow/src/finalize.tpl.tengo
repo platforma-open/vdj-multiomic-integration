@@ -141,9 +141,9 @@ self.body(func(inputs) {
 			}
 		},
 		{
-			// readable per-clonotype binding profile ("antigen (fraction%), ..."), dominant first. The
-			// customer lead-selection ask (mirror of Feature Integration's per-cell featureSummary), so a
-			// winner can be read off the BEAM breakdown in the sequence browser without opening the table.
+			// readable per-clonotype binding profile ("antigen (fraction%), ..."), dominant first — the
+			// customer lead-selection ask, mirroring Feature Integration's per-cell featureSummary. A winner
+			// reads off the BEAM breakdown in the sequence browser without opening the table.
 			column: "featureBreakdown", id: "breakdown",
 			spec: {
 				name: "pl7.app/feature/featureBreakdown", valueType: "String",

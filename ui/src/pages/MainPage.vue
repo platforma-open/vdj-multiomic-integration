@@ -210,9 +210,9 @@ const tableSettings = usePlDataTableSettingsV2({
             >
               <template #tooltip>
                 Minimum share the top {{ item.kind === "feature" ? "feature" : "category" }} must
-                reach to be this clonotype's dominant call; below it it is "ambiguous". Raise it for
-                stricter, cleaner calls; lower it toward the 0.5 floor to still call clonotypes with
-                more mixed signal.
+                reach to be this clonotype's dominant call; below that, the call is "ambiguous".
+                Raise it for stricter, cleaner calls; lower it toward the 0.5 floor to still call
+                clonotypes with more mixed signal.
               </template>
             </PlNumberField>
             <!-- Type-aware off-target call + "cross-reactive" label (F2 designation). MILAB-6496. -->
