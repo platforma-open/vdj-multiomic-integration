@@ -75,7 +75,8 @@ def dominant_category(
     """Dominant-category rule: unique max with share >= threshold, else 'ambiguous'
     when signal exists, else None. threshold clamped up to the 0.5 floor.
 
-    ``offtargets`` (features whose Type property marks them Off-Target / Decoy) are excluded from the
+    ``offtargets`` (features designated off-target via the chosen per-feature property — e.g. a Type
+    property valued Off-Target / Decoy) are excluded from the
     winner candidates but kept in the denominator, so an off-target-dominated clonotype is "ambiguous",
     never an off-target. Membership is tested case- AND whitespace-insensitively (strip + lowercase on both
     sides) so a designation catches every casing of a feature name; the returned winner stays verbatim.

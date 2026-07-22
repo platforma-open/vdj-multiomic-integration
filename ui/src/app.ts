@@ -21,9 +21,9 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
         )
       : undefined;
     // No dots in the derived default: a dataset label like "Donor.1" would otherwise carry the dot into
-    // the subtitle and, through args, into the pl7.app/trace label on every emitted column. Dots are
-    // replaced with spaces (not stripped) so separated tokens stay legible; adjacent whitespace is
-    // collapsed and trimmed. Applied to the DERIVED default ONLY — the user's customBlockLabel override
+    // the subtitle and, through args, into the pl7.app/trace label on every emitted column. Replace dots
+    // with spaces (not strip them) so separated tokens stay legible, then collapse and trim adjacent
+    // whitespace. Applied to the DERIVED default ONLY — the user's customBlockLabel override
     // flows through v-model:subtitle untouched and may contain dots.
     app.model.data.defaultBlockLabel = (match?.label ?? "")
       .replace(/\./g, " ")
