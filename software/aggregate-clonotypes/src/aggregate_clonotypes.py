@@ -78,8 +78,8 @@ def dominant_category(
     ``offtargets`` (features designated off-target via the chosen per-feature property — e.g. a Type
     property valued Off-Target / Decoy) are excluded from the
     winner candidates but kept in the denominator, so an off-target-dominated clonotype is "ambiguous",
-    never an off-target. Membership is tested case- AND whitespace-insensitively (strip + lowercase on both
-    sides) so a designation catches every casing of a feature name; the returned winner stays verbatim.
+    never an off-target. Membership is tested whitespace-insensitively but CASE-SENSITIVELY (strip on both
+    sides, no case folding); the returned winner stays verbatim.
     When they are supplied and ``label_crossreactive`` is set, a clonotype whose
     on-target signal collectively passes the threshold but is split across >= 2 on-target features is
     "cross-reactive" (a genuine multi-/cross-reactive binder — e.g. a target's human + cyno variants)
@@ -92,8 +92,8 @@ def dominant_category(
     total = sum(positive.values())
     if total <= 0:
         return None
-    offtargets_norm = {o.strip().lower() for o in offtargets}
-    candidates = {k: v for k, v in positive.items() if k.strip().lower() not in offtargets_norm}
+    offtargets_norm = {o.strip() for o in offtargets}
+    candidates = {k: v for k, v in positive.items() if k.strip() not in offtargets_norm}
     if not candidates:
         return "ambiguous"  # only off-target signal — no on-target to call
     max_val = max(candidates.values())
@@ -141,16 +141,17 @@ def resolve_offtargets_from_csv(csv_path: str, wanted: set[str]) -> set[str]:
     column entry is one of ``wanted``. The workflow exports the chosen per-feature property column here so
     the off-target designation is property-driven (like Feature Integration).
 
-    Values are matched case- AND whitespace-insensitively (strip + lowercase on BOTH sides): real panels
-    (e.g. B043) carry mixed casing of one designation — ``Off-Target`` and ``Off-target`` in a single Type
-    column — so a user who selects one canonical value catches every casing. Polars has no ``casefold``, so
-    the in-engine ``to_lowercase`` is used (correct for the ASCII Target/Off-Target/Decoy designations),
-    the idiomatic equivalent of Feature Integration's Python-side ``casefold``. Only the value comparison
-    is normalised; the returned FEATURE names are verbatim (whitespace-trimmed) from the CSV."""
+    Values are matched exactly, whitespace-trimmed but CASE-SENSITIVE (strip on BOTH sides, no case
+    folding): a feature is off-target only if its ``value`` is byte-identical (after trimming) to one the
+    user selected. Real panels (e.g. B043) may carry mixed casing of one designation — ``Off-Target`` and
+    ``Off-target`` in a single Type column — so the user selects every casing they mean; each distinct value
+    is offered separately in the block's dropdown, and the block never silently broadens a selection to
+    unselected values. Whitespace is trimmed (invisible in the picker); casing is left intact (visible, the
+    user's to choose). The returned FEATURE names are verbatim (whitespace-trimmed) from the CSV."""
     prop = pl.read_csv(csv_path, schema_overrides={"feature": pl.String, "value": pl.String})
-    wanted_norm = [w.strip().lower() for w in wanted]
+    wanted_norm = [w.strip() for w in wanted]
     return set(
-        prop.filter(pl.col("value").str.strip_chars().str.to_lowercase().is_in(wanted_norm))["feature"]
+        prop.filter(pl.col("value").str.strip_chars().is_in(wanted_norm))["feature"]
         .str.strip_chars()
         .to_list()
     )

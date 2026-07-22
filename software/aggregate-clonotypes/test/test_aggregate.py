@@ -157,7 +157,7 @@ def test_dominant_offtarget_swamped_is_ambiguous():
     )
 
 
-# --- off-target set resolution from the property CSV (case-insensitive value matching) ---
+# --- off-target set resolution from the property CSV (case-sensitive value matching) ---
 
 
 def test_resolve_offtargets_from_csv_exact_match_unchanged(tmp_path):
@@ -170,26 +170,35 @@ def test_resolve_offtargets_from_csv_exact_match_unchanged(tmp_path):
     assert got == {"DecoyX", "OTx"}
 
 
-def test_resolve_offtargets_from_csv_case_insensitive(tmp_path):
-    # Real B043 panel: the Type/value column carries mixed casing of one designation ("Off-Target" AND
-    # "Off-target"). A user who selects one canonical value must catch every casing -> matching is case-
-    # AND whitespace-insensitive on both sides. Returned FEATURE names stay verbatim from the CSV.
+def test_resolve_offtargets_from_csv_case_sensitive(tmp_path):
+    # Whitespace-trimmed but CASE-SENSITIVE: selecting "Off-Target" catches only that exact value, NOT
+    # "off-target"/"OFF-TARGET". Real B043 panels carry mixed casing in one column; the user selects every
+    # casing they mean (each is offered separately in the dropdown) — the block never broadens silently.
     csv = tmp_path / "prop.csv"
     csv.write_text(
         "feature,value\n"
-        "AgOffLower,off-target\n"  # all lowercase — the B043 duplicate casing
-        "AgOffSpaced, OFF-TARGET \n"  # different case + surrounding whitespace
+        "AgExact, Off-Target \n"  # surrounding whitespace -> trimmed, matches
+        "AgLower,off-target\n"  # lowercase — a DIFFERENT value, not selected
+        "AgUpper,OFF-TARGET\n"  # uppercase — a DIFFERENT value, not selected
         "AgOn,Target\n"
     )
-    got = resolve_offtargets_from_csv(str(csv), {"Off-Target"})
-    assert got == {"AgOffLower", "AgOffSpaced"}
+    # Only "Off-Target" selected: the exact (whitespace-padded) row matches; the other casings do not.
+    assert resolve_offtargets_from_csv(str(csv), {"Off-Target"}) == {"AgExact"}
+    # Selecting all three casings explicitly resolves all three.
+    assert resolve_offtargets_from_csv(str(csv), {"Off-Target", "off-target", "OFF-TARGET"}) == {
+        "AgExact",
+        "AgLower",
+        "AgUpper",
+    }
 
 
-def test_dominant_offtarget_membership_case_insensitive():
-    # The --offtarget-features comma-list path feeds names straight into the offtargets set, matched
-    # against feature keys in dominant_category. A designation "off-target" (lowercase) must still exclude
-    # the "Off-Target" feature (mixed case) -> only "AGX" remains, 3/8 < 0.6 -> ambiguous. Verbatim keys.
-    assert dominant_category({"Off-Target": 5, "AGX": 3}, 0.6, offtargets=frozenset({"off-target"})) == "ambiguous"
+def test_dominant_offtarget_membership_case_sensitive():
+    # Feature-name membership in the offtargets set is whitespace-trimmed but CASE-SENSITIVE (names come
+    # from one panel, so they match exactly in practice).
+    # Exact name -> excluded: "Off-Target" drops, only "AGX" (3/8 < 0.6) remains -> ambiguous.
+    assert dominant_category({"Off-Target": 5, "AGX": 3}, 0.6, offtargets=frozenset({"Off-Target"})) == "ambiguous"
+    # Case-differing name -> NOT excluded: "Off-Target" (5/8 >= 0.6) stays a candidate and wins outright.
+    assert dominant_category({"Off-Target": 5, "AGX": 3}, 0.6, offtargets=frozenset({"off-target"})) == "Off-Target"
 
 
 # --- per-clonotype feature breakdown string (F2) ---
