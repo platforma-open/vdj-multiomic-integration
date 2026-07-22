@@ -11,6 +11,7 @@ import {
   PlBtnGhost,
   PlBtnSecondary,
   PlDropdown,
+  PlDropdownMulti,
   PlDropdownRef,
   PlElementList,
   PlMaskIcon24,
@@ -89,6 +90,24 @@ function patchIntegration(id: string, patch: Partial<IntegrationEntry>) {
   );
 }
 
+// Off-target designation (F2). The property dropdown lists Feature Integration's imported per-feature
+// properties (from the model's spec-derived options); the value multi-select lists the chosen property's
+// distinct values. Changing the property clears the selected values (they belong to the old property).
+const offtargetPropertyDropdownOptions = computed(() =>
+  (app.model.outputs.offtargetPropertyOptions ?? []).map((o) => ({
+    value: o.propertyName,
+    label: o.label,
+  })),
+);
+function offtargetValueOptions(propertyName?: string) {
+  const opts = app.model.outputs.offtargetPropertyOptions ?? [];
+  const p = opts.find((o) => o.propertyName === propertyName);
+  return (p?.values ?? []).map((v) => ({ value: v, label: v }));
+}
+function setOfftargetProperty(id: string, propertyName: string | undefined) {
+  patchIntegration(id, { offtargetProperty: propertyName, offtargetValues: undefined });
+}
+
 function toggleIntegration(id: string) {
   const next = new Set(expandedIntegrations.value);
   if (next.has(id)) next.delete(id);
@@ -106,7 +125,7 @@ const tableSettings = usePlDataTableSettingsV2({
     v-model:subtitle="app.model.data.customBlockLabel"
     :subtitle-placeholder="app.model.data.defaultBlockLabel"
   >
-    <template #title>VDJ Multiomic Integration</template>
+    <template #title>Clonotype Multiomic Integration</template>
     <template #append>
       <PlBtnGhost @click.stop="settingsOpen = true">
         Settings
@@ -176,7 +195,9 @@ const tableSettings = usePlDataTableSettingsV2({
             >
               <template #tooltip>
                 Minimum within-clonotype fraction for a feature to count as bound, applied to every
-                feature. Feeds breadth and the dominant call. 0 = any signal counts.
+                feature. Feeds breadth and the dominant call. 0 = any signal counts; raise it to
+                require stronger, more consistent binding across the clonotype's cells before a
+                feature is counted.
               </template>
             </PlNumberField>
             <PlNumberField
@@ -189,9 +210,38 @@ const tableSettings = usePlDataTableSettingsV2({
             >
               <template #tooltip>
                 Minimum share the top {{ item.kind === "feature" ? "feature" : "category" }} must
-                reach to be this clonotype's dominant call; below it it is "ambiguous". Floor 0.5.
+                reach to be this clonotype's dominant call; below that, the call is "ambiguous".
+                Raise it for stricter, cleaner calls; lower it toward the 0.5 floor to still call
+                clonotypes with more mixed signal.
               </template>
             </PlNumberField>
+            <!-- Type-aware off-target call + "cross-reactive" label (F2 designation). MILAB-6496. -->
+            <PlDropdown
+              v-if="item.kind === 'feature'"
+              :model-value="item.offtargetProperty"
+              :options="offtargetPropertyDropdownOptions"
+              label="Off-target property"
+              clearable
+              @update:model-value="(v) => setOfftargetProperty(item.id, v)"
+            >
+              <template #tooltip>
+                Optional. Pick an imported per-feature property (e.g. antigen type) that marks
+                features as on- or off-target, then choose the off-target values below. Off-target
+                features drop out of the dominant call, and cross-reactive on-target binders get a
+                "cross-reactive" label instead of "ambiguous".
+              </template>
+            </PlDropdown>
+            <PlDropdownMulti
+              v-if="item.kind === 'feature' && item.offtargetProperty"
+              :model-value="item.offtargetValues ?? []"
+              :options="offtargetValueOptions(item.offtargetProperty)"
+              label="Off-target values"
+              @update:model-value="(v) => patchIntegration(item.id, { offtargetValues: v })"
+            >
+              <template #tooltip>
+                Property values that mark a feature as off-target (e.g. "Off-Target", "Decoy").
+              </template>
+            </PlDropdownMulti>
           </template>
         </template>
       </PlElementList>

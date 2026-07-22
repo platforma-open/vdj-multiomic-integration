@@ -7,11 +7,10 @@ The math functions are ported verbatim from the clonotype-distribution block's c
 alongside the dominant-category rule; they are pure and unit-tested. Every output is sorted before
 writing for determinism + workflow canonicality.
 
-Per-antigen presence cutoff: a feature is "present"/bound for a clonotype when its within-clonotype
-fraction exceeds that feature's presence threshold (a per-antigen map, falling back to a global
-default). Breadth counts present features, and the dominant-antigen call is made over the present
-features only. Restriction index is left over every nonzero feature (it measures raw concentration,
-not thresholded presence).
+Presence cutoff: a feature is "present"/bound for a clonotype when its within-clonotype fraction
+exceeds the global presence threshold (applied to every feature). Breadth counts present features,
+and the dominant-antigen call is made over the present features only. Restriction index is left over
+every nonzero feature (it measures raw concentration, not thresholded presence).
 """
 
 import argparse
@@ -54,43 +53,74 @@ def breadth(counts: list[float], presence_threshold: float = 0.0) -> int:
     return sum(1 for c in counts if (c / total) > presence_threshold)
 
 
-def present_features(
-    per_feature: dict[str, float],
-    thresholds: dict[str, float],
-    default_threshold: float,
-) -> dict[str, float]:
-    """The subset of per-feature counts whose within-clonotype fraction is strictly greater than that
-    feature's presence threshold (per-antigen map, falling back to default_threshold). Returns the
-    surviving {feature: count}; empty when there is no signal. This is the set breadth counts and the
-    set the dominant-antigen call is made over."""
+def present_features(per_feature: dict[str, float], threshold: float) -> dict[str, float]:
+    """The subset of per-feature counts whose within-clonotype fraction is strictly greater than the
+    presence threshold (applied to every feature). Returns the surviving {feature: count}; empty when
+    there is no signal. This is the set breadth counts and the set the dominant-antigen call is made over."""
     total = sum(c for c in per_feature.values() if c > 0)
     if total <= 0:
         return {}
-    return {f: c for f, c in per_feature.items() if c > 0 and (c / total) > thresholds.get(f, default_threshold)}
+    return {f: c for f, c in per_feature.items() if c > 0 and (c / total) > threshold}
 
 
-def dominant_category(counts: dict[str, float], threshold: float) -> str | None:
+CROSS_REACTIVE = "cross-reactive"
+
+
+def dominant_category(
+    counts: dict[str, float],
+    threshold: float,
+    offtargets: frozenset[str] = frozenset(),
+    label_crossreactive: bool = False,
+) -> str | None:
     """Dominant-category rule: unique max with share >= threshold, else 'ambiguous'
-    when signal exists, else None. threshold clamped up to the 0.5 floor."""
+    when signal exists, else None. threshold clamped up to the 0.5 floor.
+
+    ``offtargets`` (features designated off-target via the chosen per-feature property — e.g. a Type
+    property valued Off-Target / Decoy) are excluded from the
+    winner candidates but kept in the denominator, so an off-target-dominated clonotype is "ambiguous",
+    never an off-target. Membership is tested whitespace-insensitively but CASE-SENSITIVELY (strip on both
+    sides, no case folding); the returned winner stays verbatim.
+    When they are supplied and ``label_crossreactive`` is set, a clonotype whose
+    on-target signal collectively passes the threshold but is split across >= 2 on-target features is
+    "cross-reactive" (a genuine multi-/cross-reactive binder — e.g. a target's human + cyno variants)
+    rather than lumped into "ambiguous". With no off-targets designated the rule is unchanged. Mirrors
+    the off-target / cross-reactive rule of Feature Integration's consensus_category; unlike FI it takes
+    no negative-control parameter, so a control-dominated clonotype is called with the control's own name
+    unless the control is also designated off-target."""
     threshold = max(threshold, DOMINANCE_FLOOR)
     positive = {k: v for k, v in counts.items() if v > 0}
     total = sum(positive.values())
     if total <= 0:
         return None
-    max_val = max(positive.values())
-    winners = [k for k, v in positive.items() if v == max_val]
+    offtargets_norm = {o.strip() for o in offtargets}
+    candidates = {k: v for k, v in positive.items() if k.strip() not in offtargets_norm}
+    if not candidates:
+        return "ambiguous"  # only off-target signal — no on-target to call
+    max_val = max(candidates.values())
+    winners = [k for k, v in candidates.items() if v == max_val]
     if len(winners) == 1 and (max_val / total) >= threshold:
         return winners[0]
+    if label_crossreactive and len(candidates) >= 2 and (sum(candidates.values()) / total) >= threshold:
+        return CROSS_REACTIVE
     return "ambiguous"
 
 
-def _load_presence_thresholds(spec: str | None) -> dict[str, float]:
-    """Parse the optional per-antigen presence-threshold map (inline JSON object feature -> threshold).
-    Absent or empty -> {}, so every feature falls back to the global --presence-threshold default."""
-    if spec is None or spec == "":
-        return {}
-    raw = json.loads(spec)
-    return {str(k): float(v) for k, v in raw.items()}
+def feature_breakdown(per_feature: dict[str, float]) -> str:
+    """A readable per-clonotype binding profile: every feature with signal as ``feature (fraction%)``,
+    comma-separated and sorted by descending fraction (dominant feature first, name as tie-break).
+    Fractions display as whole percents, with "<1%" for a nonzero feature that rounds below 1%. Empty
+    string when the clonotype has no signal. Mirrors Feature Integration's per-cell featureSummary so
+    the breakdown reads the same at cell and clonotype level (the customer lead-selection ask)."""
+    positive = {k: v for k, v in per_feature.items() if v > 0}
+    total = sum(positive.values())
+    if total <= 0:
+        return ""
+    entries = []
+    for feat, cnt in sorted(positive.items(), key=lambda kv: (-kv[1], kv[0])):
+        pct = round(cnt / total * 100)
+        pct_str = "<1%" if pct == 0 else f"{pct}%"
+        entries.append(f"{feat} ({pct_str})")
+    return ", ".join(entries)
 
 
 def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.DataFrame:
@@ -106,6 +136,23 @@ def _clonotype_feature_counts(feats: pl.DataFrame, linker: pl.DataFrame) -> pl.D
     )
 
 
+def resolve_offtargets_from_csv(csv_path: str, wanted: set[str]) -> set[str]:
+    """Off-target FEATURE names resolved from a (feature,value) property CSV: the features whose ``value``
+    column entry is one of ``wanted``. The workflow exports the chosen per-feature property column here so
+    the off-target designation is property-driven (like Feature Integration).
+
+    Values are matched exactly, whitespace-trimmed but CASE-SENSITIVE (strip on BOTH sides, no case
+    folding): a feature is off-target only if its ``value`` is byte-identical (after trimming) to one the
+    user selected. Real panels (e.g. B043) may carry mixed casing of one designation — ``Off-Target`` and
+    ``Off-target`` in a single Type column — so the user selects every casing they mean; each distinct value
+    is offered separately in the block's dropdown, and the block never silently broadens a selection to
+    unselected values. Whitespace is trimmed (invisible in the picker); casing is left intact (visible, the
+    user's to choose). The returned FEATURE names are verbatim (whitespace-trimmed) from the CSV."""
+    prop = pl.read_csv(csv_path, schema_overrides={"feature": pl.String, "value": pl.String})
+    wanted_norm = [w.strip() for w in wanted]
+    return set(prop.filter(pl.col("value").str.strip_chars().is_in(wanted_norm))["feature"].str.strip_chars().to_list())
+
+
 def _write_sorted(rows: list[dict], schema: dict, out_path: str) -> None:
     """Write per-clonotype rows to CSV sorted by scClonotypeKey. When rows is empty — e.g. the feature
     or annotation cells share no (sampleId, cellId) with the linker, so the inner join is empty —
@@ -119,7 +166,6 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--feature-csv", default=None)
     p.add_argument("--linker-csv", required=True)
-    p.add_argument("--gex-csv", default=None)
     p.add_argument(
         "--annotations",
         default=None,
@@ -129,16 +175,41 @@ def main() -> None:
     p.add_argument("--dominance-threshold-feature", type=float, default=None)
     p.add_argument("--presence-threshold", type=float, default=0.0)
     p.add_argument(
-        "--presence-thresholds",
+        "--offtarget-features",
         default=None,
-        help="Optional inline JSON: per-antigen presence-threshold map {feature: threshold}. Features "
-        "not listed fall back to --presence-threshold.",
+        help="comma-separated feature names designated off-target. Excluded from the dominant-feature "
+        "call (like a control) and, when present, enable the cross-reactive label.",
     )
-    p.add_argument("--expression-method", choices=["mean", "max"], default="mean")
+    p.add_argument(
+        "--offtarget-property-csv",
+        default=None,
+        help="a (feature,value) CSV of the designated per-feature property; features whose value is in "
+        "--offtarget-values are resolved to the off-target set. The workflow exports the chosen feature-"
+        "property column here so the off-target designation is property-driven (like Feature Integration).",
+    )
+    p.add_argument(
+        "--offtarget-values",
+        default=None,
+        help="comma-separated values of the --offtarget-property-csv value column that mark a feature "
+        "as off-target (e.g. 'Off-Target,Decoy').",
+    )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    presence_thresholds = _load_presence_thresholds(args.presence_thresholds)
+    # Off-target feature set (F2). Two sources, unioned: an explicit --offtarget-features name list, and a
+    # property-driven resolution — a (feature,value) CSV of the chosen per-feature property, keeping only
+    # features whose value is in --offtarget-values. Off-targets are excluded from the dominant-feature
+    # call (kept in the denominator) and, when any exist, enable the cross-reactive label. Empty -> unchanged.
+    offtargets = (
+        set(f.strip() for f in args.offtarget_features.split(",") if f.strip()) if args.offtarget_features else set()
+    )
+    if (args.offtarget_property_csv is None) != (args.offtarget_values is None):
+        raise SystemExit("--offtarget-property-csv and --offtarget-values must be given together")
+    if args.offtarget_property_csv is not None:
+        wanted = {v.strip() for v in args.offtarget_values.split(",") if v.strip()}
+        offtargets |= resolve_offtargets_from_csv(args.offtarget_property_csv, wanted)
+    offtargets = frozenset(offtargets)
+    label_crossreactive = len(offtargets) > 0
 
     # Feature dominance threshold, falling back to the shared --dominance-threshold. Each annotation
     # carries its own dominance in the --annotations manifest.
@@ -146,9 +217,9 @@ def main() -> None:
         args.dominance_threshold_feature if args.dominance_threshold_feature is not None else args.dominance_threshold
     )
 
-    # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the GEX and
-    # annotation joins below; reading it a single time avoids re-parsing a per-cell table (one row per
-    # cell) up to three times in a 16 GiB run.
+    # Read each input CSV once. The linker feeds the feature aggregation and (optionally) the annotation
+    # join below; reading it a single time avoids re-parsing a per-cell table (one row per cell) more
+    # than once in a 16 GiB run.
     # Force identifier / label columns to String: barcodes, sample ids and categorical labels (e.g.
     # Leiden cluster ids "0","1") look numeric to CSV type inference, which would coerce them to Int and
     # both break the String-typed dominant column and mismatch join keys across the per-cell tables.
@@ -205,13 +276,20 @@ def main() -> None:
         for (clono,), grp in cf.group_by(["scClonotypeKey"]):
             counts = grp["count"].to_list()
             per_feature = dict(zip(grp["feature"].to_list(), counts))
-            present = present_features(per_feature, presence_thresholds, args.presence_threshold)
+            present = present_features(per_feature, args.presence_threshold)
             prop_rows.append(
                 {
                     "scClonotypeKey": clono,
                     "restrictionIndex": restriction_index(counts),
                     "breadth": len(present),
-                    "dominantFeature": dominant_category(present, feature_dominance),
+                    # off-target-aware dominant call (F2): off-targets excluded from winners; a clonotype
+                    # whose on-target signal is split across >= 2 targets is "cross-reactive".
+                    "dominantFeature": dominant_category(
+                        present, feature_dominance, offtargets=offtargets, label_crossreactive=label_crossreactive
+                    ),
+                    # readable per-clonotype binding profile (all features, dominant first) — mirrors FI's
+                    # per-cell featureSummary; the customer lead-selection breakdown ask.
+                    "featureBreakdown": feature_breakdown(per_feature),
                 }
             )
         _write_sorted(
@@ -221,6 +299,7 @@ def main() -> None:
                 "restrictionIndex": pl.Float64,
                 "breadth": pl.Int64,
                 "dominantFeature": pl.String,
+                "featureBreakdown": pl.String,
             },
             f"{args.output_prefix}_properties.csv",
         )
@@ -229,20 +308,6 @@ def main() -> None:
     # and the per-antigen fraction columns downstream.
     with open(f"{args.output_prefix}_feature_names.json", "w") as f:
         json.dump(feature_names, f)
-
-    # optional GEX: mean/max per (clonotype, gene)
-    if args.gex_csv is not None:
-        gex = pl.read_csv(
-            args.gex_csv,
-            schema_overrides={"sampleId": pl.String, "cellId": pl.String, "geneId": pl.String},
-        ).join(linker, on=["sampleId", "cellId"], how="inner")
-        agg = pl.col("count").mean() if args.expression_method == "mean" else pl.col("count").max()
-        (
-            gex.group_by(["scClonotypeKey", "geneId"])
-            .agg(agg.alias("expression"))
-            .sort(["scClonotypeKey", "geneId"])
-            .write_csv(f"{args.output_prefix}_expression.csv")
-        )
 
     # annotations (0..N): each folds onto clonotypes by the dominant-category rule with its own dominance
     # threshold. Emitted as one wide CSV (a dominant column per annotation key, keyed [scClonotypeKey]) plus

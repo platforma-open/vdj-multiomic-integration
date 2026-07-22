@@ -1,13 +1,14 @@
 // VDJ Multiomic Integration — top-level workflow.
 //
 // Resolves the input bundle (the VDJ dataset anchor, the Feature Integration per-cell column, the
-// dataset's cell linker resolved by spec, and the optional GEX / annotation columns) and delegates
+// dataset's cell linker resolved by spec, and the optional annotation columns) and delegates
 // the per-clonotype aggregation to an ephemeral template that awaits the bundle's data. The linker
 // is resolved here by selector under the anchor — the model does not pass a linker id (its args
 // lambda has no ctx).
 wf := import("@platforma-sdk/workflow-tengo:workflow")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
+json := import("json")
 
 aggregateTpl := assets.importTemplate(":aggregate")
 finalizeTpl := assets.importTemplate(":finalize")
@@ -20,6 +21,24 @@ wf.body(func(args) {
 	// Feature Integration per-cell feature column (anchored id). Optional: a VDJ + annotations run has none.
 	if hasFeature {
 		bundleBuilder.addSingle(args.featureColumnId)
+
+		// Per-feature property columns — Feature Integration imports every EXTRA tag-CSV column (beyond the
+		// mapped barcode-sequence + feature-name roles) as a pl7.app/feature/property column keyed on the
+		// feature axis (e.g. antigen species: human / cyno). Discover them here so they reach the
+		// per-clonotype export and downstream Lead Selection can group / filter features by property
+		// (A-0026 / A-0015). Match: register the selected feature column as an anchor and pull every
+		// pl7.app/feature/property column whose featureId axis matches the feature column's featureId axis
+		// (the anchored axis carries that axis's name + domain, so only the SAME Feature Integration block's
+		// properties match). Generic over an arbitrary number/naming of properties (no hardcoded schema);
+		// resolves to an empty list when the panel CSV carried no extra columns. finalize re-emits each onto
+		// the export (see finalize.tpl.tengo). addSingle above keeps the feature column resolvable by its own
+		// id for the aggregation CSV; addAnchor here only supplies its featureId axis to this query.
+		featureRef := json.decode(args.featureColumnId)
+		bundleBuilder.addAnchor("feature", { blockId: featureRef.blockId, name: featureRef.name })
+		bundleBuilder.addMulti({
+			name: "pl7.app/feature/property",
+			axes: [{ anchor: "feature", name: "pl7.app/feature/featureId" }]
+		}, "featureProperties")
 	}
 	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
 	// aggregate template can count the matches and emit a clear error when the dataset has more than one
@@ -38,9 +57,6 @@ wf.body(func(args) {
 	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/geneHit", domain: { "pl7.app/vdj/reference": "VGene", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "vGene")
 	bundleBuilder.addMulti({ axes: [{ anchor: "main", idx: 1 }], name: "pl7.app/vdj/geneHit", domain: { "pl7.app/vdj/reference": "JGene", "pl7.app/vdj/scClonotypeChain/index": "primary" } }, "jGene")
 
-	if args.gexColumnId != undefined {
-		bundleBuilder.addSingle(args.gexColumnId)
-	}
 	// every annotation-kind integration (0..N), each folded on independently
 	for ann in args.annotations {
 		bundleBuilder.addSingle(ann.ref)
@@ -52,8 +68,20 @@ wf.body(func(args) {
 	// instance's lineage is distinguishable; see makeTrace in finalize.tpl.tengo.
 	blockId := wf.blockId().getDataAsJson()
 
-	hasGex := args.gexColumnId != undefined
 	hasAnnotation := len(args.annotations) > 0
+
+	// Off-target designation (F2). The model gives offtargetProperty (an imported per-feature property, by
+	// its original header e.g. antigen_class) and offtargetValues (its values marking a feature off-target).
+	// aggregate exports the matching property column + resolves the off-target features; finalize appends
+	// "cross-reactive" to the dominant column's discreteValues when the designation is active. Join the value
+	// list into the comma-separated string the Python expects; "" for either -> feature off (unchanged call).
+	offtargetProperty := is_undefined(args.offtargetProperty) ? "" : args.offtargetProperty
+	offtargetValueList := is_undefined(args.offtargetValues) ? [] : args.offtargetValues
+	offtargetValues := ""
+	for i, v in offtargetValueList {
+		offtargetValues = i == 0 ? v : offtargetValues + "," + v
+	}
+	offtargetActive := hasFeature && offtargetProperty != "" && offtargetValues != ""
 
 	// Two ephemeral (not pure) steps. `aggregate` runs the Python (deterministic — it sorts every output)
 	// and returns the result files; `finalize` awaits the feature-names value + the bundle and builds
@@ -66,13 +94,12 @@ wf.body(func(args) {
 		columns: columns,
 		blockId: blockId,
 		featureColumnId: args.featureColumnId,
-		gexColumnId: args.gexColumnId,
 		annotations: args.annotations,
 		featureDominanceThreshold: args.featureDominanceThreshold,
 		presenceThreshold: args.presenceThreshold,
-		expressionMethod: args.expressionMethod,
+		offtargetProperty: offtargetProperty,
+		offtargetValues: offtargetValues,
 		hasFeature: hasFeature,
-		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})
 
@@ -84,19 +111,16 @@ wf.body(func(args) {
 		fractionsLongFile: hasFeature ? agg.output("fractionsLongFile") : undefined,
 		fractionsWideFile: hasFeature ? agg.output("fractionsWideFile") : undefined,
 		countsFile: hasFeature ? agg.output("countsFile") : undefined,
-		expressionFile: hasGex ? agg.output("expressionFile") : undefined,
 		annotationsWideFile: hasAnnotation ? agg.output("annotationsWideFile") : undefined,
 		compositionFile: hasAnnotation ? agg.output("compositionFile") : undefined,
 		annotations: args.annotations,
 		featureColumnId: args.featureColumnId,
 		featureLabel: args.featureLabel,
-		gexColumnId: args.gexColumnId,
 		blockId: blockId,
-		expressionMethod: args.expressionMethod,
 		customBlockLabel: args.customBlockLabel,
 		defaultBlockLabel: args.defaultBlockLabel,
+		offtargetActive: offtargetActive,
 		hasFeature: hasFeature,
-		hasGex: hasGex,
 		hasAnnotation: hasAnnotation
 	})
 

@@ -10,13 +10,14 @@
 //
 // SCOPE here: resolve the bundle, guard the single-grouping requirement, build the input
 // CSVs, and run the Python. All column-spec construction (dominant antigen + discreteValues, the
-// per-antigen fraction columns, RI/breadth, the matrices, optional GEX/annotation, borrowed identity)
+// per-antigen fraction columns, RI/breadth, the matrices, optional annotation, borrowed identity)
 // lives in finalize.tpl.tengo.
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 ll := import("@platforma-sdk/workflow-tengo:ll")
+csvAxes := import(":csv-axes")
 json := import("json")
 
 aggSw := assets.importSoftware("@platforma-open/milaboratories.vdj-multiomic-integration.aggregate-clonotypes:main")
@@ -25,7 +26,6 @@ self.awaitState("columns", "PColumnBundle")
 
 self.body(func(inputs) {
 	columns := inputs.columns
-	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
 
 	// Cell-linker resolution + grouping guard. The linker is resolved as a MULTI query in
@@ -41,13 +41,18 @@ self.body(func(inputs) {
 	}
 	linkerCol := linkerCols[0]
 
-	// A per-cell column -> flat CSV: value column under `valueHeader`, each axis renamed by position
-	// to the header the Python expects. Same mem/cpu budget for every cell CSV.
-	buildCellCsv := func(colEntry, valueHeader, axisHeaders) {
+	// A per-cell column -> flat CSV: value column under `valueHeader`, plus each axis relabeled to the
+	// header the Python expects. `axisMap` is an ordered list of { name: <semantic axis name>, header:
+	// <CSV header> }; headers are matched to axes BY SEMANTIC NAME, not by position, so a discovered
+	// column whose axes are ordered e.g. [cellId, sampleId] (which the model's shape-based discovery
+	// admits) still exports correctly and joins. A required axis missing from the column fails loudly
+	// (csvAxes.validateAxisHeaderMap) rather than silently mislabeling. Same mem/cpu budget for every
+	// cell CSV.
+	buildCellCsv := func(colEntry, valueHeader, axisMap) {
 		b := pframes.csvFileBuilder()
 		b.add(colEntry, { header: valueHeader })
-		for i, h in axisHeaders {
-			b.setAxisHeader(colEntry.spec.axesSpec[i].name, h)
+		for _, entry in csvAxes.validateAxisHeaderMap(colEntry.spec.axesSpec, colEntry.spec.name, axisMap) {
+			b.setAxisHeader(entry.name, entry.header)
 		}
 		b.mem("8GiB")
 		b.cpu(1)
@@ -72,7 +77,11 @@ self.body(func(inputs) {
 		linkerSpecPlain[k] = v
 	}
 	linkerSpecPlain.annotations = linkerAnnotations
-	linkerCsvFile := buildCellCsv({ spec: linkerSpecPlain, data: linkerCol.data }, "linker", ["sampleId", "cellId", "scClonotypeKey"])
+	linkerCsvFile := buildCellCsv({ spec: linkerSpecPlain, data: linkerCol.data }, "linker", [
+		{ name: "pl7.app/sampleId", header: "sampleId" },
+		{ name: "pl7.app/sc/cellId", header: "cellId" },
+		{ name: "pl7.app/vdj/scClonotypeKey", header: "scClonotypeKey" }
+	])
 
 	run := exec.builder().
 		software(aggSw).
@@ -85,7 +94,11 @@ self.body(func(inputs) {
 	// feature column -> CSV (sampleId, cellId, feature, umiCount) + its thresholds. Optional: skipped for a
 	// VDJ + annotations run with no feature integration.
 	if hasFeature {
-		featCsvFile := buildCellCsv(columns.getColumn(inputs.featureColumnId), "umiCount", ["sampleId", "cellId", "feature"])
+		featCsvFile := buildCellCsv(columns.getColumn(inputs.featureColumnId), "umiCount", [
+			{ name: "pl7.app/sampleId", header: "sampleId" },
+			{ name: "pl7.app/sc/cellId", header: "cellId" },
+			{ name: "pl7.app/feature/featureId", header: "feature" }
+		])
 		run = run.addFile("features.csv", featCsvFile).
 			arg("--feature-csv").arg("features.csv").
 			arg("--dominance-threshold-feature").arg(string(inputs.featureDominanceThreshold))
@@ -93,13 +106,26 @@ self.body(func(inputs) {
 		if inputs.presenceThreshold != undefined {
 			run = run.arg("--presence-threshold").arg(string(inputs.presenceThreshold))
 		}
-	}
 
-	if hasGex {
-		gexCsvFile := buildCellCsv(columns.getColumn(inputs.gexColumnId), "count", ["sampleId", "cellId", "geneId"])
-		run = run.addFile("gex.csv", gexCsvFile).
-			arg("--gex-csv").arg("gex.csv").
-			arg("--expression-method").arg(inputs.expressionMethod)
+		// Off-target designation (F2). Export the chosen per-feature property column as a (feature, value)
+		// CSV so the Python resolves the off-target feature set from it (property-driven, like Feature
+		// Integration). The property is matched by its original header (domain propertyName), populated by
+		// FI's feature-property import. Unset / no matching property -> nothing passed -> unchanged call.
+		offtargetProperty := is_undefined(inputs.offtargetProperty) ? "" : inputs.offtargetProperty
+		offtargetValues := is_undefined(inputs.offtargetValues) ? "" : inputs.offtargetValues
+		if offtargetProperty != "" && offtargetValues != "" {
+			for prop in columns.getColumns("featureProperties") {
+				if prop.spec.domain["pl7.app/feature/propertyName"] == offtargetProperty {
+					propCsvFile := buildCellCsv(prop, "value", [
+						{ name: "pl7.app/feature/featureId", header: "feature" }
+					])
+					run = run.addFile("offtarget_property.csv", propCsvFile).
+						arg("--offtarget-property-csv").arg("offtarget_property.csv").
+						arg("--offtarget-values").arg(offtargetValues)
+					break
+				}
+			}
+		}
 	}
 
 	// annotations (0..N): one per-cell CSV each + a JSON manifest {csv, key, dominance} the Python loops
@@ -108,7 +134,10 @@ self.body(func(inputs) {
 		annManifest := []
 		for i, ann in inputs.annotations {
 			csvName := "annotation_" + string(i) + ".csv"
-			annCsvFile := buildCellCsv(columns.getColumn(ann.ref), "value", ["sampleId", "cellId"])
+			annCsvFile := buildCellCsv(columns.getColumn(ann.ref), "value", [
+				{ name: "pl7.app/sampleId", header: "sampleId" },
+				{ name: "pl7.app/sc/cellId", header: "cellId" }
+			])
 			run = run.addFile(csvName, annCsvFile)
 			annManifest = append(annManifest, { csv: csvName, key: "ann" + string(i), label: ann.label, dominance: ann.dominanceThreshold })
 		}
@@ -117,7 +146,7 @@ self.body(func(inputs) {
 
 	// Retrieve the properties CSV (dominantFeature + RI + breadth), the per-feature fraction (long +
 	// wide) + UMI count matrices, the feature-names list (as content, read in finalize), and — when
-	// selected — the GEX / annotation CSVs.
+	// selected — the annotation CSVs.
 	// feature-names + annotation-values are always emitted (empty when the corresponding input is absent);
 	// the feature matrices / properties CSVs only when a feature is integrated.
 	run = run.
@@ -130,9 +159,6 @@ self.body(func(inputs) {
 			saveFile("result_fractions_wide.csv").
 			saveFile("result_counts.csv")
 	}
-	if hasGex {
-		run = run.saveFile("result_expression.csv")
-	}
 	if hasAnnotation {
 		run = run.
 			saveFile("result_annotations_wide.csv").
@@ -142,7 +168,7 @@ self.body(func(inputs) {
 
 	// Return the run's output files (resources). main.tpl.tengo forwards these to finalize together with
 	// the unresolved bundle. featureNames is content (read as a value in finalize); the rest are files
-	// consumed by xsv.importFile there. The GEX / annotation files are added only when those inputs are
+	// consumed by xsv.importFile there. The annotation files are added only when those inputs are
 	// present: a template output field cannot be assigned undefined.
 	result := {
 		featureNames: run.getFileContent("result_feature_names.json"),
@@ -153,9 +179,6 @@ self.body(func(inputs) {
 		result.fractionsLongFile = run.getFile("result_fractions.csv")
 		result.fractionsWideFile = run.getFile("result_fractions_wide.csv")
 		result.countsFile = run.getFile("result_counts.csv")
-	}
-	if hasGex {
-		result.expressionFile = run.getFile("result_expression.csv")
 	}
 	if hasAnnotation {
 		result.annotationsWideFile = run.getFile("result_annotations_wide.csv")

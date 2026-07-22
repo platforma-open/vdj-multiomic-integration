@@ -15,7 +15,15 @@ import sys
 
 import numpy as np
 import pytest
-from aggregate_clonotypes import breadth, dominant_category, present_features, restriction_index
+from aggregate_clonotypes import (
+    CROSS_REACTIVE,
+    breadth,
+    dominant_category,
+    feature_breakdown,
+    present_features,
+    resolve_offtargets_from_csv,
+    restriction_index,
+)
 from compartment_ref import restriction_index as ref_restriction_index
 from hypothesis import given
 from hypothesis import strategies as st
@@ -68,26 +76,21 @@ def test_breadth_with_threshold():
     assert breadth([8.0, 2.0], presence_threshold=0.3) == 1
 
 
-# --- per-antigen presence cutoff (per-antigen threshold = presence/binding cutoff) ---
+# --- presence cutoff (global within-clonotype fraction threshold, applied to every feature) ---
 
 
 def test_present_features_default_keeps_all_nonzero():
-    # no per-antigen overrides, default 0.0 -> every nonzero feature survives
-    assert present_features({"A": 8, "B": 2}, {}, 0.0) == {"A": 8, "B": 2}
+    # threshold 0.0 -> every nonzero feature survives
+    assert present_features({"A": 8, "B": 2}, 0.0) == {"A": 8, "B": 2}
 
 
-def test_present_features_per_antigen_threshold_drops_below_cutoff():
-    # fractions A=0.8, B=0.2; B needs 0.3 -> B dropped, A (needs default 0.0) kept
-    assert present_features({"A": 8, "B": 2}, {"B": 0.3}, 0.0) == {"A": 8}
-
-
-def test_present_features_global_default_applies_when_unlisted():
-    # fractions 0.8/0.2; global default 0.25 -> only A survives
-    assert present_features({"A": 8, "B": 2}, {}, 0.25) == {"A": 8}
+def test_present_features_threshold_drops_below_cutoff():
+    # fractions 0.8/0.2; threshold 0.25 -> only A survives
+    assert present_features({"A": 8, "B": 2}, 0.25) == {"A": 8}
 
 
 def test_present_features_no_signal_is_empty():
-    assert present_features({"A": 0, "B": 0}, {}, 0.0) == {}
+    assert present_features({"A": 0, "B": 0}, 0.0) == {}
 
 
 # --- dominant category (reused) ---
@@ -107,6 +110,115 @@ def test_dominant_exact_split_floor():
 
 def test_dominant_none():
     assert dominant_category({"A": 0}, 0.6) is None
+
+
+# --- off-target-aware dominant call + cross-reactive label (F2, mirrors FI consensus_category) ---
+
+
+def test_dominant_excludes_offtargets():
+    # Off-target excluded from winners, kept in denominator: AGX 3 / OT 5 -> 3/8 < 0.6 -> ambiguous.
+    assert dominant_category({"AGX": 3, "OT": 5}, 0.6, offtargets=frozenset({"OT"})) == "ambiguous"
+
+
+def test_dominant_offtarget_single_ontarget_wins():
+    assert dominant_category({"AGX": 7, "OT": 2}, 0.6, offtargets=frozenset({"OT"})) == "AGX"
+
+
+def test_dominant_crossreactive_two_targets():
+    # human+cyno split 45/45, OT 10 -> on-target set 90% across 2 targets -> cross-reactive.
+    assert (
+        dominant_category(
+            {"TgtA_human": 45, "TgtA_cyno": 45, "OT": 10},
+            0.6,
+            offtargets=frozenset({"OT"}),
+            label_crossreactive=True,
+        )
+        == CROSS_REACTIVE
+    )
+
+
+def test_dominant_crossreactive_needs_label():
+    assert (
+        dominant_category({"TgtA_human": 45, "TgtA_cyno": 45, "OT": 10}, 0.6, offtargets=frozenset({"OT"}))
+        == "ambiguous"
+    )
+
+
+def test_dominant_offtarget_swamped_is_ambiguous():
+    # On-target set 40% (< 0.6), OT swamps -> ambiguous, never cross-reactive.
+    assert (
+        dominant_category(
+            {"TgtA": 20, "TgtB": 20, "OT": 60},
+            0.6,
+            offtargets=frozenset({"OT"}),
+            label_crossreactive=True,
+        )
+        == "ambiguous"
+    )
+
+
+# --- off-target set resolution from the property CSV (case-sensitive value matching) ---
+
+
+def test_resolve_offtargets_from_csv_exact_match_unchanged(tmp_path):
+    # Exact-case designations resolve as before; returned feature names are verbatim from the CSV.
+    csv = tmp_path / "prop.csv"
+    csv.write_text(
+        "feature,value\nTgtA,Target\nDecoyX,Decoy\nOTx, Off-Target \n"  # whitespace tolerated (stripped)
+    )
+    got = resolve_offtargets_from_csv(str(csv), {"Off-Target", "Decoy"})
+    assert got == {"DecoyX", "OTx"}
+
+
+def test_resolve_offtargets_from_csv_case_sensitive(tmp_path):
+    # Whitespace-trimmed but CASE-SENSITIVE: selecting "Off-Target" catches only that exact value, NOT
+    # "off-target"/"OFF-TARGET". Real B043 panels carry mixed casing in one column; the user selects every
+    # casing they mean (each is offered separately in the dropdown) — the block never broadens silently.
+    csv = tmp_path / "prop.csv"
+    csv.write_text(
+        "feature,value\n"
+        "AgExact, Off-Target \n"  # surrounding whitespace -> trimmed, matches
+        "AgLower,off-target\n"  # lowercase — a DIFFERENT value, not selected
+        "AgUpper,OFF-TARGET\n"  # uppercase — a DIFFERENT value, not selected
+        "AgOn,Target\n"
+    )
+    # Only "Off-Target" selected: the exact (whitespace-padded) row matches; the other casings do not.
+    assert resolve_offtargets_from_csv(str(csv), {"Off-Target"}) == {"AgExact"}
+    # Selecting all three casings explicitly resolves all three.
+    assert resolve_offtargets_from_csv(str(csv), {"Off-Target", "off-target", "OFF-TARGET"}) == {
+        "AgExact",
+        "AgLower",
+        "AgUpper",
+    }
+
+
+def test_dominant_offtarget_membership_case_sensitive():
+    # Feature-name membership in the offtargets set is whitespace-trimmed but CASE-SENSITIVE (names come
+    # from one panel, so they match exactly in practice).
+    # Exact name -> excluded: "Off-Target" drops, only "AGX" (3/8 < 0.6) remains -> ambiguous.
+    assert dominant_category({"Off-Target": 5, "AGX": 3}, 0.6, offtargets=frozenset({"Off-Target"})) == "ambiguous"
+    # Case-differing name -> NOT excluded: "Off-Target" (5/8 >= 0.6) stays a candidate and wins outright.
+    assert dominant_category({"Off-Target": 5, "AGX": 3}, 0.6, offtargets=frozenset({"off-target"})) == "Off-Target"
+
+
+# --- per-clonotype feature breakdown string (F2) ---
+
+
+def test_feature_breakdown_sorted_desc_with_percents():
+    # 61% / 34% / 5% -> dominant first, whole percents.
+    s = feature_breakdown({"TgtA_human": 61, "TgtA_cyno": 34, "OT": 5})
+    assert s == "TgtA_human (61%), TgtA_cyno (34%), OT (5%)"
+
+
+def test_feature_breakdown_tiny_fraction_is_lt1():
+    # a nonzero feature rounding below 1% shows "<1%", not "0%".
+    s = feature_breakdown({"A": 999, "B": 1})
+    assert "B (<1%)" in s and s.startswith("A (")
+
+
+def test_feature_breakdown_empty_when_no_signal():
+    assert feature_breakdown({"A": 0}) == ""
+    assert feature_breakdown({}) == ""
 
 
 # --- properties (invariants that hold for ALL valid inputs) ---
@@ -215,12 +327,10 @@ def _run_cli(
     feature_rows,
     linker_rows,
     *,
-    gex_rows=None,
     annotation_rows=None,
     annotations=None,
-    expression_method=None,
     presence_threshold=None,
-    presence_thresholds=None,
+    offtarget_features=None,
 ):
     linker = tmp_path / "linker.csv"
     _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
@@ -239,14 +349,8 @@ def _run_cli(
         cmd += ["--feature-csv", str(feats)]
     if presence_threshold is not None:
         cmd += ["--presence-threshold", str(presence_threshold)]
-    if presence_thresholds is not None:
-        cmd += ["--presence-thresholds", json.dumps(presence_thresholds)]
-    if gex_rows is not None:
-        gex = tmp_path / "gex.csv"
-        _write_csv(gex, ["sampleId", "cellId", "geneId", "count"], gex_rows)
-        cmd += ["--gex-csv", str(gex)]
-        if expression_method is not None:
-            cmd += ["--expression-method", expression_method]
+    if offtarget_features is not None:
+        cmd += ["--offtarget-features", offtarget_features]
     # annotation manifest: `annotations` (list of (rows, dominance)) takes precedence; else the single
     # `annotation_rows` maps to one entry at dominance 0.6.
     ann_entries = (
@@ -283,7 +387,13 @@ def test_cli_disjoint_join_emits_empty_not_crash(tmp_path):
         fieldnames = reader.fieldnames
         rows = list(reader)
     assert rows == []  # header present, zero data rows
-    assert set(fieldnames) == {"scClonotypeKey", "restrictionIndex", "breadth", "dominantFeature"}
+    assert set(fieldnames) == {
+        "scClonotypeKey",
+        "restrictionIndex",
+        "breadth",
+        "dominantFeature",
+        "featureBreakdown",
+    }
 
 
 @pytest.mark.slow
@@ -437,50 +547,6 @@ def test_cli_no_feature_annotation_only(tmp_path):
     assert not (tmp_path / "result_fractions.csv").exists()
 
 
-# --- optional GEX branch: per-(clonotype, gene) mean/max expression ---
-# NB these pin an intentional semantic: the mean is over the cells that CARRY a count for the gene
-# (a sparse count matrix), not over every cell in the clonotype. C1/geneY below = mean(2) = 2.0, NOT
-# mean(2, 0) = 1.0 — geneY has no row for cB, and no zero is imputed.
-
-
-@pytest.mark.slow
-def test_cli_gex_mean_expression(tmp_path):
-    _run_cli(
-        tmp_path,
-        feature_rows=[("s1", "cA", "AGX", 5), ("s1", "cB", "AGX", 5), ("s1", "cD", "AGX", 5)],
-        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cD", "C2")],
-        gex_rows=[
-            ("s1", "cA", "geneX", 4),
-            ("s1", "cB", "geneX", 8),
-            ("s1", "cA", "geneY", 2),
-            ("s1", "cD", "geneX", 10),
-        ],
-        expression_method="mean",
-    )
-    with open(tmp_path / "result_expression.csv", newline="") as f:
-        rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
-    assert rows == {("C1", "geneX"): 6.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
-
-
-@pytest.mark.slow
-def test_cli_gex_max_expression(tmp_path):
-    _run_cli(
-        tmp_path,
-        feature_rows=[("s1", "cA", "AGX", 5), ("s1", "cB", "AGX", 5), ("s1", "cD", "AGX", 5)],
-        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cD", "C2")],
-        gex_rows=[
-            ("s1", "cA", "geneX", 4),
-            ("s1", "cB", "geneX", 8),
-            ("s1", "cA", "geneY", 2),
-            ("s1", "cD", "geneX", 10),
-        ],
-        expression_method="max",
-    )
-    with open(tmp_path / "result_expression.csv", newline="") as f:
-        rows = {(r["scClonotypeKey"], r["geneId"]): float(r["expression"]) for r in csv.DictReader(f)}
-    assert rows == {("C1", "geneX"): 8.0, ("C1", "geneY"): 2.0, ("C2", "geneX"): 10.0}
-
-
 # --- per-antigen fraction columns + feature-names output (one fraction pcolumn per antigen) ---
 
 
@@ -508,18 +574,46 @@ def test_cli_wide_fractions_and_feature_names(tmp_path):
 
 
 @pytest.mark.slow
-def test_cli_per_antigen_presence_threshold(tmp_path):
-    # C1: AGX 8 (0.8), BGX 2 (0.2). A per-antigen cutoff of 0.3 on BGX drops it from "present":
+def test_cli_offtarget_dominant_and_breakdown(tmp_path):
+    # F2 end-to-end: with --offtarget-features the dominant call excludes off-targets and labels an
+    # on-target split as cross-reactive; the featureBreakdown string lists every feature dominant-first.
+    # C1: TgtA_human 45 + TgtA_cyno 45 + OT 10 (one cell each, same clonotype) -> cross-reactive.
+    # C2: TgtA_human 80 + OT 20 -> single on-target wins.
+    _run_cli(
+        tmp_path,
+        feature_rows=[
+            ("s1", "cA", "TgtA_human", 45),
+            ("s1", "cA", "TgtA_cyno", 45),
+            ("s1", "cA", "OT", 10),
+            ("s1", "cB", "TgtA_human", 80),
+            ("s1", "cB", "OT", 20),
+        ],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C2")],
+        offtarget_features="OT,Decoy1",
+    )
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        rows = {r["scClonotypeKey"]: r for r in csv.DictReader(f)}
+    assert rows["C1"]["dominantFeature"] == CROSS_REACTIVE
+    assert rows["C2"]["dominantFeature"] == "TgtA_human"
+    # breakdown lists every feature (incl. off-target), dominant first, whole percents.
+    # 45/45 tie broken by name ascending (cyno before human); OT last.
+    assert rows["C1"]["featureBreakdown"] == "TgtA_cyno (45%), TgtA_human (45%), OT (10%)"
+    assert rows["C2"]["featureBreakdown"] == "TgtA_human (80%), OT (20%)"
+
+
+@pytest.mark.slow
+def test_cli_global_presence_threshold(tmp_path):
+    # C1: AGX 8 (0.8), BGX 2 (0.2). A global cutoff of 0.3 drops BGX from "present":
     # breadth 2 -> 1, and the dominant call is made over surviving {AGX} -> AGX at 100%.
     _run_cli(
         tmp_path,
         feature_rows=[("s1", "cA", "AGX", 8), ("s1", "cA", "BGX", 2)],
         linker_rows=[("s1", "cA", "C1")],
-        presence_thresholds={"BGX": 0.3},
+        presence_threshold=0.3,
     )
     with open(tmp_path / "result_properties.csv", newline="") as f:
         row = next(csv.DictReader(f))
-    assert int(row["breadth"]) == 1  # only AGX survives its cutoff
+    assert int(row["breadth"]) == 1  # only AGX clears the cutoff
     assert row["dominantFeature"] == "AGX"
     # The raw per-antigen fractions are unaffected by the presence cutoff (they report real signal).
     with open(tmp_path / "result_fractions_wide.csv", newline="") as f:

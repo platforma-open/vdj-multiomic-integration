@@ -25,7 +25,6 @@ self.awaitState("annotationValues", "ResourceReady")
 self.body(func(inputs) {
 	columns := inputs.columns
 	hasFeature := inputs.hasFeature
-	hasGex := inputs.hasGex
 	hasAnnotation := inputs.hasAnnotation
 
 	// Distinct antigen names present (empty when no feature integration): the per-antigen fraction columns
@@ -44,7 +43,7 @@ self.body(func(inputs) {
 	// so this block's trace step appends to a real upstream spec in every configuration. Label = this
 	// instance's block label, so two VDJM blocks stamp distinct downstream provenance.
 	traceSeed := hasFeature ? columns.getSpec(inputs.featureColumnId) : linkerCol.spec
-	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "VDJ Multiomic Integration"
+	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "Clonotype Multiomic Integration"
 	trace := pSpec.makeTrace(traceSeed, {
 		type: "milaboratories.vdj-multiomic-integration",
 		id: inputs.blockId,
@@ -65,6 +64,9 @@ self.body(func(inputs) {
 	}
 	addDisplayOnly := func(k, spec, data) {
 		fbDisplay.add(k, spec, data)
+	}
+	addExportOnly := func(k, spec, data) {
+		fbExport.add(k, spec, data)
 	}
 	// import a result CSV and inject its columns via addFn (addOwn = both frames; addDisplayOnly = display).
 	importAndInject := func(file, importAxes, importColumns, addFn) {
@@ -87,17 +89,23 @@ self.body(func(inputs) {
 	// per-clonotype properties: dominant antigen (categorical) + restriction index / breadth
 	// (numerical scores). The dominant antigen carries discreteValues (the present antigens + "ambiguous")
 	// on top of isDiscreteFilter — Lead Selection's FilterCard requires BOTH to render a multi-select.
-	// Attribute the feature metrics to their source integration (e.g. "Antigens · Restriction index"), and
+	// Attribute the feature metrics to their source integration (e.g. "Antigens Restriction index"), and
 	// order the antigen group together via orderPriority: dominant antigen, then restriction index, breadth.
 	featPrefix := inputs.featureLabel || "Antigens"
+	// discreteValues for the dominant-antigen multi-select: the present antigens + "ambiguous", plus
+	// "cross-reactive" when an off-target designation is active (F2) — the Python emits that label only
+	// then, so the filter offers it only when it can occur.
 	dominantValues := featureNames + ["ambiguous"]
+	if !is_undefined(inputs.offtargetActive) && inputs.offtargetActive {
+		dominantValues = dominantValues + ["cross-reactive"]
+	}
 	importAndInject(inputs.propertiesFile, [{ column: "scClonotypeKey", spec: scAxis }], [
 		{
 			column: "dominantFeature", id: "dom",
 			spec: {
 				name: "pl7.app/feature/dominantFeature", valueType: "String",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Dominant feature",
+					"pl7.app/label": featPrefix + " Dominant feature",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": string(json.encode(dominantValues)),
 					"pl7.app/table/visibility": "default",
@@ -110,7 +118,7 @@ self.body(func(inputs) {
 			spec: {
 				name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Restriction index",
+					"pl7.app/label": featPrefix + " Restriction index",
 					"pl7.app/format": ".3f",
 					"pl7.app/table/visibility": "default",
 					"pl7.app/table/orderPriority": "110",
@@ -124,11 +132,25 @@ self.body(func(inputs) {
 			spec: {
 				name: "pl7.app/vdj/breadth", valueType: "Int",
 				annotations: {
-					"pl7.app/label": featPrefix + " · Breadth",
+					"pl7.app/label": featPrefix + " Breadth",
 					"pl7.app/table/visibility": "optional",
 					"pl7.app/table/orderPriority": "120",
 					"pl7.app/isScore": "true",
 					"pl7.app/score/rankingOrder": "decreasing"
+				}
+			}
+		},
+		{
+			// readable per-clonotype binding profile ("antigen (fraction%), ..."), dominant first — the
+			// customer lead-selection ask, mirroring Feature Integration's per-cell featureSummary. A winner
+			// reads off the BEAM breakdown in the sequence browser without opening the table.
+			column: "featureBreakdown", id: "breakdown",
+			spec: {
+				name: "pl7.app/feature/featureBreakdown", valueType: "String",
+				annotations: {
+					"pl7.app/label": featPrefix + " Feature breakdown",
+					"pl7.app/table/visibility": "default",
+					"pl7.app/table/orderPriority": "105"
 				}
 			}
 		}
@@ -148,7 +170,7 @@ self.body(func(inputs) {
 		spec: {
 			name: "pl7.app/feature/clonotypeFraction", valueType: "Double",
 			annotations: {
-				"pl7.app/label": featPrefix + " · Feature fraction",
+				"pl7.app/label": featPrefix + " Feature fraction",
 				"pl7.app/format": ".3f",
 				"pl7.app/table/visibility": "default"
 			}
@@ -161,7 +183,7 @@ self.body(func(inputs) {
 		spec: {
 			name: "pl7.app/feature/clonotypeUmiCount", valueType: "Int",
 			annotations: {
-				"pl7.app/label": featPrefix + " · Feature UMI count",
+				"pl7.app/label": featPrefix + " Feature UMI count",
 				"pl7.app/table/visibility": "optional"
 			}
 		}
@@ -191,44 +213,55 @@ self.body(func(inputs) {
 		}
 		importAndInject(inputs.fractionsWideFile, [{ column: "scClonotypeKey", spec: scAxis }], perAntigenCols, addOwn)
 	}
-	}
 
-	// optional per-clonotype gene expression (clonotype x gene): mean/max across the clonotype's cells.
-	if hasGex {
-		gexSpec := columns.getSpec(inputs.gexColumnId)
-		geneAxis := gexSpec.axesSpec[2] // pl7.app/rna-seq/geneId
-		exprLabel := inputs.expressionMethod == "max" ? "Max expression" : "Mean expression"
-		importAndInject(inputs.expressionFile, [
-			{ column: "scClonotypeKey", spec: scAxis },
-			{ column: "geneId", spec: geneAxis }
-		], [{
-			column: "expression", id: "expression",
-			spec: {
-				name: "pl7.app/rna-seq/clonotypeExpression", valueType: "Double",
-				domain: { "pl7.app/feature/aggregation": inputs.expressionMethod },
-				annotations: {
-					"pl7.app/label": exprLabel,
-					"pl7.app/format": ".3f",
-					"pl7.app/table/visibility": "optional"
-				}
-			}
-		}], addOwn)
+	// Per-feature property columns discovered in main.tpl.tengo (Feature Integration's extra tag-CSV
+	// columns — e.g. antigen species human / cyno — keyed on the feature axis, name pl7.app/feature/property,
+	// domain { pl7.app/feature/propertyName }). Re-emitted VERBATIM (the source spec, incl. isDiscreteFilter +
+	// discreteValues + label) onto the EXPORT frame only, keyed on the SAME featureId axis as the feature
+	// count / fraction matrices above, so downstream Lead Selection joins each property to the per-feature
+	// counts and can group / filter features by it (all human vs all cyno — A-0015). Export-only, NOT the
+	// display frame: a [featureId]-only column would otherwise be a candidate for the in-block per-clonotype
+	// table's value anchor. Only VDJM's own trace step is appended (provenance); identity is unchanged.
+	// Empty-safe: no matching property columns -> the loop adds nothing.
+	for prop in columns.getColumns("featureProperties") {
+		propName := prop.spec.domain["pl7.app/feature/propertyName"]
+		addExportOnly("featureProperty_" + strings.substituteSpecialCharacters(propName), trace.inject(prop.spec), prop.data)
+	}
 	}
 
 	// per-clonotype dominant annotation, ONE column per annotation integration. Each is
 	// named and labeled from its source ("Dominant " + the source label, e.g. "Dominant Cell type",
-	// "Dominant Leiden Cluster Id"), distinguished by its source spec name in the domain, and carries its
+	// "Dominant Leiden Cluster Id"), distinguished by its source spec name AND source provenance in the
+	// domain (so two same-named sources don't collide in the pool — see the per-column note below), and carries its
 	// own discreteValues (present values + "ambiguous") for the downstream multi-select. Imported from the
 	// wide CSV whose columns are the manifest keys "ann0", "ann1", ...
 	if hasAnnotation {
 		annCols := []
 		for i, ann in inputs.annotations {
 			key := "ann" + string(i)
+			// Source provenance disambiguator. Two integrated annotations whose SOURCE columns share the
+			// same spec name would otherwise emit dominant columns with IDENTICAL pool identity
+			// (name + domain + axes) and collide in the exported clonotypeProperties frame that Lead
+			// Selection consumes (the in-frame id domAnn_0/domAnn_1 does NOT affect pool identity). Fold the
+			// source column's full domain into a NEW, additive domain key so same-named sources stay distinct,
+			// while the SAME source across re-runs yields the identical spec (pure-template dedup /
+			// idempotency). canonical.encode is a key-SORTED recursive JSON string, so it is byte-stable
+			// across runs (map iteration order is not) and it captures EVERY distinguishing domain key of the
+			// source — the block that produced it (pl7.app/blockId, when stamped) AND any per-column key
+			// (e.g. a cluster resolution). That guarantees: distinct source domain => distinct identity;
+			// identical source => identical identity — never an array index or run-order value. (Two sources
+			// that share name + domain but differ only in AXES are not disambiguated here, but that is not a
+			// realistic shape for [sampleId, cellId] per-cell annotation columns.)
+			srcSpec := columns.getSpec(ann.ref)
+			srcDomain := is_undefined(srcSpec.domain) ? {} : srcSpec.domain
 			annCols = append(annCols, {
 				column: key, id: "domAnn_" + string(i),
 				spec: {
 					name: "pl7.app/rna-seq/clonotypeDominantAnnotation", valueType: "String",
-					domain: { "pl7.app/rna-seq/annotationSource": columns.getSpec(ann.ref).name },
+					domain: {
+						"pl7.app/rna-seq/annotationSource": srcSpec.name,
+						"pl7.app/rna-seq/annotationSourceDomain": string(canonical.encode(srcDomain))
+					},
 					annotations: {
 						"pl7.app/label": "Dominant " + ann.label,
 						"pl7.app/isDiscreteFilter": "true",

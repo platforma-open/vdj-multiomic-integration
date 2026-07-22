@@ -42,7 +42,7 @@
       "ui": "@platforma-open/milaboratories.vdj-multiomic-integration.ui/dist"
     },
     "meta": {
-      "title": "VDJ Multiomic Integration",
+      "title": "Clonotype Multiomic Integration",
       "logo": "file:../logos/block-logo.png",
       "url": "https://github.com/platforma-open/vdj-multiomic-integration",
       "support": "mailto:support@milaboratories.com",
@@ -53,7 +53,8 @@
         "single-cell",
         "vdj",
         "clonotype",
-        "annotation"
+        "annotation",
+        "multiomics"
       ],
       "organization": {
         "name": "MiLaboratories Inc",
