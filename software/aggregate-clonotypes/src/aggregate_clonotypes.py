@@ -153,6 +153,16 @@ def resolve_offtargets_from_csv(csv_path: str, wanted: set[str]) -> set[str]:
     return set(prop.filter(pl.col("value").str.strip_chars().is_in(wanted_norm))["feature"].str.strip_chars().to_list())
 
 
+def resolve_controls_from_csv(csv_path: str) -> set[str]:
+    """Negative-control FEATURE names from the dedicated per-feature marker CSV (feature,value): the
+    features whose ``value`` is ``true``. Feature Integration emits this marker on the shared feature axis
+    (spec ``pl7.app/feature/negativeControl``) from its single control-feature dropdown, and the workflow
+    exports it here so the control designation reaches this block. Unlike off-targets, the control is
+    removed ENTIRELY from the profile metrics (see main). Names are whitespace-trimmed (case preserved)."""
+    marker = pl.read_csv(csv_path, schema_overrides={"feature": pl.String, "value": pl.String})
+    return set(marker.filter(pl.col("value").str.strip_chars() == "true")["feature"].str.strip_chars().to_list())
+
+
 def _write_sorted(rows: list[dict], schema: dict, out_path: str) -> None:
     """Write per-clonotype rows to CSV sorted by scClonotypeKey. When rows is empty — e.g. the feature
     or annotation cells share no (sampleId, cellId) with the linker, so the inner join is empty —
@@ -191,7 +201,20 @@ def main() -> None:
         "--offtarget-values",
         default=None,
         help="comma-separated values of the --offtarget-property-csv value column that mark a feature "
-        "as off-target (e.g. 'Off-Target,Decoy').",
+        "as off-target (e.g. 'Off-Target,Off-target').",
+    )
+    p.add_argument(
+        "--control-features",
+        default=None,
+        help="comma-separated negative-control feature names. Removed ENTIRELY from the profile metrics "
+        "(restriction index, antigen breadth, the per-antigen fraction columns, and the dominant call) — "
+        "unlike off-targets, which stay in the metrics and are only barred from winning the dominant call.",
+    )
+    p.add_argument(
+        "--control-csv",
+        default=None,
+        help="a (feature,value) CSV of the negative-control marker Feature Integration emits on the "
+        "feature axis; features whose value is 'true' are the negative control (removed entirely).",
     )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
@@ -210,6 +233,17 @@ def main() -> None:
         offtargets |= resolve_offtargets_from_csv(args.offtarget_property_csv, wanted)
     offtargets = frozenset(offtargets)
     label_crossreactive = len(offtargets) > 0
+
+    # Negative-control feature set (control-aware metrics). Two sources, unioned: an explicit
+    # --control-features name list, and the dedicated per-feature marker CSV FI emits on the feature axis
+    # (features whose value is "true"). The negative control is NOT a callable antigen: it is removed
+    # ENTIRELY from the feature matrix below, so it never appears as a fraction column and never enters the
+    # restriction index, antigen breadth, or the dominant call. This differs from off-targets, which remain
+    # in the metrics and are only barred from winning the dominant call. Empty -> nothing removed
+    # (byte-identical to the pre-control behaviour). Matched whitespace-trimmed, case-sensitive.
+    controls = set(c.strip() for c in args.control_features.split(",") if c.strip()) if args.control_features else set()
+    if args.control_csv is not None:
+        controls |= resolve_controls_from_csv(args.control_csv)
 
     # Feature dominance threshold, falling back to the shared --dominance-threshold. Each annotation
     # carries its own dominance in the --annotations manifest.
@@ -240,6 +274,14 @@ def main() -> None:
             ),
             linker,
         )
+        # Drop the negative control(s) entirely before any metric is computed: every downstream output
+        # (feature_names, the count / fraction matrices, RI, breadth, the dominant call, and the breakdown)
+        # is derived from `cf`, so a single filter here keeps the control out of all of them. A clonotype
+        # whose only signal was the control then has no rows left and falls out sparsely — the same as a
+        # clonotype with no antigen signal.
+        if controls:
+            controls_norm = [c.strip() for c in controls]
+            cf = cf.filter(~pl.col("feature").str.strip_chars().is_in(controls_norm))
         feature_names = sorted(cf["feature"].unique().to_list()) if not cf.is_empty() else []
 
         # advanced count matrix (clonotype x feature)

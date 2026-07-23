@@ -331,6 +331,8 @@ def _run_cli(
     annotations=None,
     presence_threshold=None,
     offtarget_features=None,
+    control_features=None,
+    control_rows=None,
 ):
     linker = tmp_path / "linker.csv"
     _write_csv(linker, ["sampleId", "cellId", "scClonotypeKey"], linker_rows)
@@ -351,6 +353,14 @@ def _run_cli(
         cmd += ["--presence-threshold", str(presence_threshold)]
     if offtarget_features is not None:
         cmd += ["--offtarget-features", offtarget_features]
+    if control_features is not None:
+        cmd += ["--control-features", control_features]
+    # negative-control marker CSV (feature,value): the dedicated per-feature marker FI emits on the
+    # feature axis; features whose value is "true" are the negative control.
+    if control_rows is not None:
+        control_csv = tmp_path / "control.csv"
+        _write_csv(control_csv, ["feature", "value"], control_rows)
+        cmd += ["--control-csv", str(control_csv)]
     # annotation manifest: `annotations` (list of (rows, dominance)) takes precedence; else the single
     # `annotation_rows` maps to one entry at dominance 0.6.
     ann_entries = (
@@ -619,3 +629,95 @@ def test_cli_global_presence_threshold(tmp_path):
     with open(tmp_path / "result_fractions_wide.csv", newline="") as f:
         wide = next(csv.DictReader(f))
     assert float(wide["BGX"]) == pytest.approx(0.2)
+
+
+# --- negative-control exclusion (control-aware metrics): the control is FULLY removed from RI, antigen
+# breadth, the per-antigen fraction columns, and the dominant call. Off-targets, by contrast, stay in
+# the metrics and are only excluded from the dominant winner. ---
+
+
+@pytest.mark.slow
+def test_cli_control_excluded_from_all_metrics(tmp_path):
+    # C1: TgtA 8, Ctrl 2 (control designated). The control is not a real antigen: it must not appear as a
+    # fraction column, must not count toward RI/breadth, and must not win the dominant call. With Ctrl
+    # removed, C1 binds a single antigen -> RI 1.0, breadth 1, dominant TgtA, TgtA fraction 1.0.
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cA", "TgtA", 8), ("s1", "cA", "Ctrl", 2)],
+        linker_rows=[("s1", "cA", "C1")],
+        control_features="Ctrl",
+    )
+    with open(tmp_path / "result_feature_names.json") as f:
+        assert json.load(f) == ["TgtA"]  # Ctrl dropped from the feature set entirely
+    with open(tmp_path / "result_fractions_wide.csv", newline="") as f:
+        wide = {r["scClonotypeKey"]: r for r in csv.DictReader(f)}
+    assert set(wide["C1"]) == {"scClonotypeKey", "TgtA"}  # no Ctrl column
+    assert float(wide["C1"]["TgtA"]) == pytest.approx(1.0)
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        row = next(csv.DictReader(f))
+    assert float(row["restrictionIndex"]) == 1.0  # single antigen once control excluded
+    assert int(row["breadth"]) == 1
+    assert row["dominantFeature"] == "TgtA"
+    assert row["featureBreakdown"] == "TgtA (100%)"  # control absent from the breakdown too
+
+
+@pytest.mark.slow
+def test_cli_control_via_marker_csv(tmp_path):
+    # The workflow feeds the control as the dedicated per-feature marker CSV (feature,value); only rows
+    # whose value is "true" are the control. A non-"true" row must NOT be treated as control.
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cA", "TgtA", 8), ("s1", "cA", "Ctrl", 2)],
+        linker_rows=[("s1", "cA", "C1")],
+        control_rows=[("Ctrl", "true"), ("TgtA", "false")],
+    )
+    with open(tmp_path / "result_feature_names.json") as f:
+        assert json.load(f) == ["TgtA"]  # only the value=="true" feature is excluded
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        row = next(csv.DictReader(f))
+    assert row["dominantFeature"] == "TgtA"
+    assert int(row["breadth"]) == 1
+
+
+@pytest.mark.slow
+def test_cli_control_and_offtarget_are_distinct(tmp_path):
+    # Control is fully removed; off-target stays IN the metrics but out of the dominant winner.
+    # C1: Tgt 50 + OT 30 + Ctrl 20. Control removed -> denominator = Tgt 50 + OT 30 = 80. OT excluded from
+    # winners -> Tgt 50/80 = 0.625 >= 0.6 -> dominant Tgt. Breadth counts Tgt + OT (control gone) = 2.
+    _run_cli(
+        tmp_path,
+        feature_rows=[
+            ("s1", "cA", "Tgt", 50),
+            ("s1", "cB", "OT", 30),
+            ("s1", "cC", "Ctrl", 20),
+        ],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C1"), ("s1", "cC", "C1")],
+        control_features="Ctrl",
+        offtarget_features="OT",
+    )
+    with open(tmp_path / "result_feature_names.json") as f:
+        assert json.load(f) == ["OT", "Tgt"]  # off-target retained, control removed
+    with open(tmp_path / "result_fractions_wide.csv", newline="") as f:
+        wide = {r["scClonotypeKey"]: r for r in csv.DictReader(f)}
+    assert set(wide["C1"]) == {"scClonotypeKey", "OT", "Tgt"}  # OT kept, no Ctrl column
+    assert float(wide["C1"]["Tgt"]) == pytest.approx(50 / 80)
+    assert float(wide["C1"]["OT"]) == pytest.approx(30 / 80)
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        row = next(csv.DictReader(f))
+    assert row["dominantFeature"] == "Tgt"
+    assert int(row["breadth"]) == 2  # Tgt + OT; control excluded
+
+
+@pytest.mark.slow
+def test_cli_control_only_clonotype_dropped(tmp_path):
+    # A clonotype whose only feature signal is the control has no antigen signal once the control is
+    # removed -> dropped from the properties (like an all-zero clonotype), never emitted with a null call.
+    _run_cli(
+        tmp_path,
+        feature_rows=[("s1", "cA", "Ctrl", 5), ("s1", "cB", "TgtA", 5)],
+        linker_rows=[("s1", "cA", "C1"), ("s1", "cB", "C2")],
+        control_features="Ctrl",
+    )
+    with open(tmp_path / "result_properties.csv", newline="") as f:
+        keys = {r["scClonotypeKey"] for r in csv.DictReader(f)}
+    assert keys == {"C2"}  # C1 (control-only) dropped
