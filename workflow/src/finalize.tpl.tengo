@@ -97,7 +97,7 @@ self.body(func(inputs) {
 	// then, so the filter offers it only when it can occur.
 	dominantValues := featureNames + ["ambiguous"]
 	if !is_undefined(inputs.offtargetActive) && inputs.offtargetActive {
-		dominantValues = dominantValues + ["cross-reactive"]
+		dominantValues = dominantValues + ["Target cross-reactive"]
 	}
 	importAndInject(inputs.propertiesFile, [{ column: "scClonotypeKey", spec: scAxis }], [
 		{
@@ -119,6 +119,7 @@ self.body(func(inputs) {
 				name: "pl7.app/vdj/restrictionIndex", valueType: "Double",
 				annotations: {
 					"pl7.app/label": featPrefix + " Restriction index",
+					"pl7.app/description": "Antigen restriction index: 1 minus the normalized Shannon entropy over the antigens a clonotype binds (Shannon clonality). 1 = binds a single antigen, toward 0 = binds many evenly. Reflects binding focus, not affinity; distinct from a compartment restriction index.",
 					"pl7.app/format": ".3f",
 					"pl7.app/table/visibility": "default",
 					"pl7.app/table/orderPriority": "110",
@@ -133,6 +134,7 @@ self.body(func(inputs) {
 				name: "pl7.app/vdj/breadth", valueType: "Int",
 				annotations: {
 					"pl7.app/label": featPrefix + " Breadth",
+					"pl7.app/description": "Antigen breadth: the number of antigens this clonotype binds (within-clonotype fraction above the presence threshold). Distinct from antibody neutralization breadth.",
 					"pl7.app/table/visibility": "optional",
 					"pl7.app/table/orderPriority": "120",
 					"pl7.app/isScore": "true",

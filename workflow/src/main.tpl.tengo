@@ -39,6 +39,16 @@ wf.body(func(args) {
 			name: "pl7.app/feature/property",
 			axes: [{ anchor: "feature", name: "pl7.app/feature/featureId" }]
 		}, "featureProperties")
+
+		// Negative-control marker (control-aware metrics). Feature Integration emits a dedicated per-feature
+		// column (pl7.app/feature/negativeControl, value "true" for the control) on the feature axis from its
+		// single control-feature dropdown. Discover it under the same feature anchor so aggregate can remove
+		// the control entirely from the restriction index / antigen breadth / per-antigen fraction columns /
+		// dominant call. Resolves to an empty list when no control was designated (metrics unchanged).
+		bundleBuilder.addMulti({
+			name: "pl7.app/feature/negativeControl",
+			axes: [{ anchor: "feature", name: "pl7.app/feature/featureId" }]
+		}, "negativeControl")
 	}
 	// cellLinker resolved by spec under the anchor. Resolved as a MULTI query (not addSingle) so the
 	// aggregate template can count the matches and emit a clear error when the dataset has more than one

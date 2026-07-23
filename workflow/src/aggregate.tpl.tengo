@@ -126,6 +126,21 @@ self.body(func(inputs) {
 				}
 			}
 		}
+
+		// Negative-control marker (control-aware metrics, control-awareness). Feature Integration emits the
+		// control as a dedicated per-feature column (pl7.app/feature/negativeControl, value "true") on the
+		// feature axis; export it as a (feature, value) CSV so the Python removes the control feature(s)
+		// entirely from RI / breadth / the per-antigen fraction columns / the dominant call. Unlike an
+		// off-target (kept in the metrics, only barred from winning), the control is not a callable antigen.
+		// Absent -> nothing passed -> metrics unchanged.
+		controlCols := columns.getColumns("negativeControl")
+		if len(controlCols) > 0 {
+			controlCsvFile := buildCellCsv(controlCols[0], "value", [
+				{ name: "pl7.app/feature/featureId", header: "feature" }
+			])
+			run = run.addFile("control.csv", controlCsvFile).
+				arg("--control-csv").arg("control.csv")
+		}
 	}
 
 	// annotations (0..N): one per-cell CSV each + a JSON manifest {csv, key, dominance} the Python loops
