@@ -97,7 +97,7 @@ self.body(func(inputs) {
 	// then, so the filter offers it only when it can occur.
 	dominantValues := featureNames + ["ambiguous"]
 	if !is_undefined(inputs.offtargetActive) && inputs.offtargetActive {
-		dominantValues = dominantValues + ["cross-reactive"]
+		dominantValues = dominantValues + ["Target cross-reactive"]
 	}
 	importAndInject(inputs.propertiesFile, [{ column: "scClonotypeKey", spec: scAxis }], [
 		{
