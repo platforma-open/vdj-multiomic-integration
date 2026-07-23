@@ -239,7 +239,7 @@ const tableSettings = usePlDataTableSettingsV2({
               @update:model-value="(v) => patchIntegration(item.id, { offtargetValues: v })"
             >
               <template #tooltip>
-                Property values that mark a feature as off-target (e.g. "Off-Target", "Decoy").
+                Property values that mark a feature as off-target (e.g. "Off-Target", "Off-target").
               </template>
             </PlDropdownMulti>
           </template>
