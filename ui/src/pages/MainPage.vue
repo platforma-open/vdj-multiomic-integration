@@ -227,8 +227,8 @@ const tableSettings = usePlDataTableSettingsV2({
               <template #tooltip>
                 Optional. Pick an imported per-feature property (e.g. antigen type) that marks
                 features as on- or off-target, then choose the off-target values below. Off-target
-                features drop out of the dominant call, and cross-reactive on-target binders get a
-                "cross-reactive" label instead of "ambiguous".
+                features drop out of the dominant call, and on-target binders spread across two or
+                more targets get a "Target cross-reactive" label instead of "ambiguous".
               </template>
             </PlDropdown>
             <PlDropdownMulti

@@ -63,7 +63,7 @@ def present_features(per_feature: dict[str, float], threshold: float) -> dict[st
     return {f: c for f, c in per_feature.items() if c > 0 and (c / total) > threshold}
 
 
-CROSS_REACTIVE = "cross-reactive"
+CROSS_REACTIVE = "Target cross-reactive"
 
 
 def dominant_category(
@@ -76,7 +76,7 @@ def dominant_category(
     when signal exists, else None. threshold clamped up to the 0.5 floor.
 
     ``offtargets`` (features designated off-target via the chosen per-feature property — e.g. a Type
-    property valued Off-Target / Decoy) are excluded from the
+    property valued Off-Target / Off-target) are excluded from the
     winner candidates but kept in the denominator, so an off-target-dominated clonotype is "ambiguous",
     never an off-target. Membership is tested whitespace-insensitively but CASE-SENSITIVELY (strip on both
     sides, no case folding); the returned winner stays verbatim.
