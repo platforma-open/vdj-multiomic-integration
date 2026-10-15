@@ -1,3 +1,4 @@
+import { kind } from "@platforma-open/milaboratories.vdj-multiomic-integration.kind";
 import type {
   InferOutputsType,
   PFrameHandle,
@@ -63,7 +64,9 @@ function discoverAnnotationOptions(
 
 const DOMINANCE_FLOOR = 0.5; // the dominance threshold is user-adjustable down to 0.5, never lower
 
-const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
+// `params` carries the kind's init-params contract, undefined outside a template.
+const dataModel = new DataModelBuilder({ kind }).from<BlockData>("v1").init(({ params }) => ({
+  datasetRef: params?.datasetRef,
   integrations: [],
   customBlockLabel: "",
   defaultBlockLabel: "",
@@ -149,7 +152,7 @@ function graphPFrame(
   }
 }
 
-export const platforma = BlockModelV3.create(dataModel)
+export const platforma = BlockModelV3.create({ dataModel, kind })
   .args<BlockArgs>((data) => {
     if (!data.datasetRef) throw new Error("Select a VDJ single-cell dataset");
     const integrations = data.integrations ?? [];
@@ -197,6 +200,8 @@ export const platforma = BlockModelV3.create(dataModel)
       defaultBlockLabel: data.defaultBlockLabel ?? "",
     };
   })
+  // Inverse of the kind's init-params contract: the same fields `init` consumes.
+  .templateParams((data) => ({ datasetRef: data.datasetRef }))
   // VDJ single-cell dataset anchor: columns keyed on [sampleId, scClonotypeKey] flagged as anchors
   .output("datasetOptions", (ctx) =>
     ctx.resultPool.getOptions([
