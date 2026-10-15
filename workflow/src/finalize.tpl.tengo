@@ -43,6 +43,10 @@ self.body(func(inputs) {
 	// so this block's trace step appends to a real upstream spec in every configuration. Label = this
 	// instance's block label, so two VDJM blocks stamp distinct downstream provenance.
 	traceSeed := hasFeature ? columns.getSpec(inputs.featureColumnId) : linkerCol.spec
+	// A subset run roots the trace in the filter (dataset -> the block that made the subset).
+	if !is_undefined(inputs.subset) {
+		traceSeed = columns.getSpec(json.decode(inputs.subset))
+	}
 	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "Clonotype Multiomic Integration"
 	trace := pSpec.makeTrace(traceSeed, {
 		type: "milaboratories.vdj-multiomic-integration",
@@ -68,6 +72,17 @@ self.body(func(inputs) {
 	addExportOnly := func(k, spec, data) {
 		fbExport.add(k, spec, data)
 	}
+	// Trace, plus the subset stamp on a subset run (its columns cover only the subset)
+	stamp := func(spec) {
+		s := trace.inject(spec)
+		if !is_undefined(inputs.subset) {
+			if is_undefined(s.domain) {
+				s.domain = {}
+			}
+			s.domain["pl7.app/inputSubset"] = inputs.subset
+		}
+		return s
+	}
 	// import a result CSV and inject its columns via addFn (addOwn = both frames; addDisplayOnly = display).
 	importAndInject := func(file, importAxes, importColumns, addFn) {
 		rawPf := xsv.importFile(file, "csv", {
@@ -77,7 +92,7 @@ self.body(func(inputs) {
 			partitionKeyLength: 0
 		}, { splitDataAndSpec: true })
 		for k, v in rawPf {
-			addFn(k, trace.inject(v.spec), v.data)
+			addFn(k, stamp(v.spec), v.data)
 		}
 	}
 

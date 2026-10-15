@@ -18,6 +18,10 @@ wf.body(func(args) {
 	bundleBuilder := wf.createPBundleBuilder()
 	bundleBuilder.ignoreMissingDomains() // robust matching of the VDJ dataset's per-clonotype property columns
 	bundleBuilder.addAnchor("main", args.datasetRef) // the VDJ single-cell dataset / cellLinker anchor
+	// Optional subset column picked alongside the dataset (PlDatasetSelector)
+	if !is_undefined(args.inputFilter) {
+		bundleBuilder.addRef(json.decode(args.inputFilter))
+	}
 	// Feature Integration per-cell feature column (anchored id). Optional: a VDJ + annotations run has none.
 	if hasFeature {
 		bundleBuilder.addSingle(args.featureColumnId)
@@ -90,7 +94,7 @@ wf.body(func(args) {
 	// not pure: safe cross-project dedup of the 16 GiB step is deferred to v1.1 (needs the exported columns
 	// content-addressed via pl7.app/contentTag, verified against the SDK); a
 	// subtly non-canonical pure template would ship silent wrong cache hits.
-	agg := render.createEphemeral(aggregateTpl, {
+	aggInputs := {
 		columns: columns,
 		blockId: blockId,
 		featureColumnId: args.featureColumnId,
@@ -101,9 +105,14 @@ wf.body(func(args) {
 		offtargetValues: offtargetValues,
 		hasFeature: hasFeature,
 		hasAnnotation: hasAnnotation
-	})
+	}
+	// Only for a subset run, so a full-data run keeps exactly its previous inputs
+	if !is_undefined(args.inputFilter) {
+		aggInputs.subset = args.inputFilter
+	}
+	agg := render.createEphemeral(aggregateTpl, aggInputs)
 
-	result := render.createEphemeral(finalizeTpl, {
+	finalizeInputs := {
 		columns: columns,
 		featureNames: agg.output("featureNames"),
 		annotationValues: agg.output("annotationValues"),
@@ -122,7 +131,12 @@ wf.body(func(args) {
 		offtargetActive: offtargetActive,
 		hasFeature: hasFeature,
 		hasAnnotation: hasAnnotation
-	})
+	}
+	// Only for a subset run, so a full-data run keeps exactly its previous inputs
+	if !is_undefined(args.inputFilter) {
+		finalizeInputs.subset = args.inputFilter
+	}
+	result := render.createEphemeral(finalizeTpl, finalizeInputs)
 
 	outputs := {
 		clonotypeTable: result.output("clonotypeTable"),
