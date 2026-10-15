@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import {
+  createDatasetSelection,
   createPlDataTableStateV2,
+  createPrimaryRef,
+  type DatasetSelection,
   type IntegrationEntry,
-  type PlRef,
 } from "@platforma-open/milaboratories.vdj-multiomic-integration.model";
 import {
   PlAgDataTableV2,
@@ -10,9 +12,9 @@ import {
   PlBlockPage,
   PlBtnGhost,
   PlBtnSecondary,
+  PlDatasetSelector,
   PlDropdown,
   PlDropdownMulti,
-  PlDropdownRef,
   PlElementList,
   PlMaskIcon24,
   PlNumberField,
@@ -37,12 +39,21 @@ watch(
 );
 
 // The dataset is the anchor only (clonotype space + cell linker). Per-cell inputs are chosen explicitly
-// as integration cards below, so picking the dataset writes only the ref (and resets the grid state).
-function setDataset(dsRef?: PlRef) {
-  app.model.data.datasetRef = dsRef;
-  if (dsRef === undefined) return;
-  app.model.data.tableState = createPlDataTableStateV2();
-}
+// as integration cards below, so picking the dataset (or a subset of it) writes only the two refs
+// (and resets the grid state). Stored as two refs so blocks saved before filters keep `datasetRef`.
+const datasetSelection = computed<DatasetSelection | undefined>({
+  get: () => {
+    const { datasetRef, filterRef } = app.model.data;
+    if (datasetRef === undefined) return undefined;
+    return createDatasetSelection(createPrimaryRef(datasetRef, filterRef));
+  },
+  set: (selection) => {
+    app.model.data.datasetRef = selection?.primary.column;
+    app.model.data.filterRef = selection?.primary.filter;
+    if (selection === undefined) return;
+    app.model.data.tableState = createPlDataTableStateV2();
+  },
+});
 
 // The integration cards, bound so PlElementList can reorder/remove via immutable writes.
 const integrationItems = computed<IntegrationEntry[]>({
@@ -148,18 +159,17 @@ const tableSettings = usePlDataTableSettingsV2({
 
     <PlSlideModal v-model="settingsOpen">
       <template #title>Settings</template>
-      <PlDropdownRef
-        :model-value="app.model.data.datasetRef"
+      <PlDatasetSelector
+        v-model="datasetSelection"
         :options="app.model.outputs.datasetOptions"
         label="VDJ single-cell dataset"
         required
-        @update:model-value="setDataset"
       >
         <template #tooltip>
           The clonotype space and the cell linker come from this dataset. Add the per-cell data to
           integrate below.
         </template>
-      </PlDropdownRef>
+      </PlDatasetSelector>
 
       <PlElementList
         v-model:items="integrationItems"
