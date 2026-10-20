@@ -16,6 +16,8 @@ pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 canonical := import("@platforma-sdk/workflow-tengo:canonical") // deterministic key-sorted JSON, for content-stable column keys
 strings := import("@platforma-sdk/workflow-tengo:strings")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
 json := import("json")
 
 self.awaitState("columns", "PColumnBundle")
@@ -43,6 +45,10 @@ self.body(func(inputs) {
 	// so this block's trace step appends to a real upstream spec in every configuration. Label = this
 	// instance's block label, so two VDJM blocks stamp distinct downstream provenance.
 	traceSeed := hasFeature ? columns.getSpec(inputs.featureColumnId) : linkerCol.spec
+	// A subset run roots the trace in the filter (dataset -> the block that made the subset).
+	if !is_undefined(inputs.subset) {
+		traceSeed = columns.getSpec(json.decode(inputs.subset))
+	}
 	traceLabel := inputs.customBlockLabel || inputs.defaultBlockLabel || "Clonotype Multiomic Integration"
 	trace := pSpec.makeTrace(traceSeed, {
 		type: "milaboratories.vdj-multiomic-integration",
@@ -68,6 +74,17 @@ self.body(func(inputs) {
 	addExportOnly := func(k, spec, data) {
 		fbExport.add(k, spec, data)
 	}
+	// Trace, plus the subset stamp on a subset run (its columns cover only the subset)
+	stamp := func(spec) {
+		s := trace.inject(spec)
+		if !is_undefined(inputs.subset) {
+			if is_undefined(s.domain) {
+				s.domain = {}
+			}
+			s.domain["pl7.app/inputSubset"] = inputs.subset
+		}
+		return s
+	}
 	// import a result CSV and inject its columns via addFn (addOwn = both frames; addDisplayOnly = display).
 	importAndInject := func(file, importAxes, importColumns, addFn) {
 		rawPf := xsv.importFile(file, "csv", {
@@ -77,7 +94,7 @@ self.body(func(inputs) {
 			partitionKeyLength: 0
 		}, { splitDataAndSpec: true })
 		for k, v in rawPf {
-			addFn(k, trace.inject(v.spec), v.data)
+			addFn(k, stamp(v.spec), v.data)
 		}
 	}
 
@@ -278,7 +295,37 @@ self.body(func(inputs) {
 	// Borrowed VDJ identity (label + primary CDR3 aa + V/J genes) -> displayPf ONLY. Keyed on
 	// scClonotypeKey alone so they render in the flat per-clonotype table; content-derived keys keep a
 	// column's frame identity stable if the matched set/order shifts between runs.
-	labelCol := columns.getColumn("clonotypeLabel")
+	// The borrowed columns cover the whole dataset, so on a subset run they are cut to it first;
+	// otherwise they would give every clonotype a row in the table.
+	borrowed := [columns.getColumn("clonotypeLabel")] + columns.getColumns("cdr3aa") +
+		columns.getColumns("vGene") + columns.getColumns("jGene")
+	if !is_undefined(inputs.subset) {
+		subsetCol := columns.getColumn(json.decode(inputs.subset))
+		cutWf := pt.workflow()
+		for i, col in borrowed {
+			axisSpec := col.spec.axesSpec[0]
+			cutWf.frame(pt.p.inner(pt.p.column("value", col), pt.p.column("subsetFilter", subsetCol))).
+				select(pt.sc.axis(axisSpec).alias("key"), pt.col("value")).
+				saveFrameDirect("cut" + string(i), {
+					axes: [{ column: "key", spec: axisSpec }],
+					columns: [{ column: "value", spec: {
+						kind: "PColumn",
+						name: col.spec.name,
+						valueType: col.spec.valueType,
+						domain: col.spec.domain,
+						annotations: col.spec.annotations
+					} }],
+					partitionKeyLength: 0
+				})
+		}
+		cutResult := cutWf.run()
+		cut := []
+		for i, _ in borrowed {
+			cut = append(cut, pUtil.pFrameToColumnsMap(cutResult.getFrameDirect("cut" + string(i)))["value"])
+		}
+		borrowed = cut
+	}
+	labelCol := borrowed[0]
 	fbDisplay.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
 	// Hide the borrowed per-chain (heavy/light) identity columns — CDR3 aa, V gene, J gene — by default,
 	// so the clonotype label + this block's own properties lead the results table and the chain details
@@ -303,9 +350,7 @@ self.body(func(inputs) {
 			fbDisplay.add("clonoIdentity_" + newSpec.name + "|" + string(canonical.encode(domain)), trace.inject(newSpec), col.data)
 		}
 	}
-	addIdentityCols(columns.getColumns("cdr3aa"))
-	addIdentityCols(columns.getColumns("vGene"))
-	addIdentityCols(columns.getColumns("jGene"))
+	addIdentityCols(borrowed[1:])
 
 	displayPf := fbDisplay.build()
 	exportPf := fbExport.build()
