@@ -16,6 +16,8 @@ pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 canonical := import("@platforma-sdk/workflow-tengo:canonical") // deterministic key-sorted JSON, for content-stable column keys
 strings := import("@platforma-sdk/workflow-tengo:strings")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
 json := import("json")
 
 self.awaitState("columns", "PColumnBundle")
@@ -293,7 +295,37 @@ self.body(func(inputs) {
 	// Borrowed VDJ identity (label + primary CDR3 aa + V/J genes) -> displayPf ONLY. Keyed on
 	// scClonotypeKey alone so they render in the flat per-clonotype table; content-derived keys keep a
 	// column's frame identity stable if the matched set/order shifts between runs.
-	labelCol := columns.getColumn("clonotypeLabel")
+	// The borrowed columns cover the whole dataset, so on a subset run they are cut to it first;
+	// otherwise they would give every clonotype a row in the table.
+	borrowed := [columns.getColumn("clonotypeLabel")] + columns.getColumns("cdr3aa") +
+		columns.getColumns("vGene") + columns.getColumns("jGene")
+	if !is_undefined(inputs.subset) {
+		subsetCol := columns.getColumn(json.decode(inputs.subset))
+		cutWf := pt.workflow()
+		for i, col in borrowed {
+			axisSpec := col.spec.axesSpec[0]
+			cutWf.frame(pt.p.inner(pt.p.column("value", col), pt.p.column("subsetFilter", subsetCol))).
+				select(pt.sc.axis(axisSpec).alias("key"), pt.col("value")).
+				saveFrameDirect("cut" + string(i), {
+					axes: [{ column: "key", spec: axisSpec }],
+					columns: [{ column: "value", spec: {
+						kind: "PColumn",
+						name: col.spec.name,
+						valueType: col.spec.valueType,
+						domain: col.spec.domain,
+						annotations: col.spec.annotations
+					} }],
+					partitionKeyLength: 0
+				})
+		}
+		cutResult := cutWf.run()
+		cut := []
+		for i, _ in borrowed {
+			cut = append(cut, pUtil.pFrameToColumnsMap(cutResult.getFrameDirect("cut" + string(i)))["value"])
+		}
+		borrowed = cut
+	}
+	labelCol := borrowed[0]
 	fbDisplay.add("clonotypeLabel", trace.inject(labelCol.spec), labelCol.data)
 	// Hide the borrowed per-chain (heavy/light) identity columns — CDR3 aa, V gene, J gene — by default,
 	// so the clonotype label + this block's own properties lead the results table and the chain details
@@ -318,9 +350,7 @@ self.body(func(inputs) {
 			fbDisplay.add("clonoIdentity_" + newSpec.name + "|" + string(canonical.encode(domain)), trace.inject(newSpec), col.data)
 		}
 	}
-	addIdentityCols(columns.getColumns("cdr3aa"))
-	addIdentityCols(columns.getColumns("vGene"))
-	addIdentityCols(columns.getColumns("jGene"))
+	addIdentityCols(borrowed[1:])
 
 	displayPf := fbDisplay.build()
 	exportPf := fbExport.build()
