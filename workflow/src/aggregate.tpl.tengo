@@ -47,10 +47,16 @@ self.body(func(inputs) {
 	// column whose axes are ordered e.g. [cellId, sampleId] (which the model's shape-based discovery
 	// admits) still exports correctly and joins. A required axis missing from the column fails loudly
 	// (csvAxes.validateAxisHeaderMap) rather than silently mislabeling. Same mem/cpu budget for every
-	// cell CSV.
-	buildCellCsv := func(colEntry, valueHeader, axisMap) {
-		b := pframes.csvFileBuilder()
-		b.add(colEntry, { header: valueHeader })
+	// cell CSV. An optional filter column keeps only the subset's rows (a filtered primary).
+	buildCellCsv := func(colEntry, valueHeader, axisMap, ...filter) {
+		b := undefined
+		if len(filter) == 0 {
+			b = pframes.csvFileBuilder()
+			b.add(colEntry, { header: valueHeader })
+		} else {
+			b = pframes.tableBuilder("csv")
+			b.addPrimary("main", { __isPrimaryRef: "v1", column: colEntry, filter: filter[0] }, { header: valueHeader })
+		}
 		for _, entry in csvAxes.validateAxisHeaderMap(colEntry.spec.axesSpec, colEntry.spec.name, axisMap) {
 			b.setAxisHeader(entry.name, entry.header)
 		}
@@ -77,11 +83,21 @@ self.body(func(inputs) {
 		linkerSpecPlain[k] = v
 	}
 	linkerSpecPlain.annotations = linkerAnnotations
-	linkerCsvFile := buildCellCsv({ spec: linkerSpecPlain, data: linkerCol.data }, "linker", [
+	linkerColumn := { spec: linkerSpecPlain, data: linkerCol.data }
+	linkerAxisMap := [
 		{ name: "pl7.app/sampleId", header: "sampleId" },
 		{ name: "pl7.app/sc/cellId", header: "cellId" },
 		{ name: "pl7.app/vdj/scClonotypeKey", header: "scClonotypeKey" }
-	])
+	]
+	linkerCsvFile := undefined
+	if is_undefined(inputs.subset) {
+		linkerCsvFile = buildCellCsv(linkerColumn, "linker", linkerAxisMap)
+	} else {
+		// Subset run: only the subset's clonotypes, and so only their cells, enter the
+		// aggregation. Every per-cell table is inner-joined to this linker.
+		f := columns.getColumn(json.decode(inputs.subset))
+		linkerCsvFile = buildCellCsv(linkerColumn, "linker", linkerAxisMap, { spec: f.spec, data: f.data })
+	}
 
 	run := exec.builder().
 		software(aggSw).

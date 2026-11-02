@@ -1,4 +1,6 @@
+import { kind } from "@platforma-open/milaboratories.vdj-multiomic-integration.kind";
 import type {
+  DatasetOption,
   InferOutputsType,
   PFrameHandle,
   RenderCtx,
@@ -7,6 +9,8 @@ import type {
 import {
   AccessorColumnsProvider,
   BlockModelV3,
+  buildDatasetOptions,
+  createGlobalPObjectId,
   createPlDataTableStateV2,
   createPlDataTableV3,
   DataModelBuilder,
@@ -61,9 +65,15 @@ function discoverAnnotationOptions(
   }));
 }
 
+// Key axis of the datasets this block accepts: single-cell clonotypes.
+const DATASET_KEY_AXES: ReadonlySet<string> = new Set(["pl7.app/vdj/scClonotypeKey"]);
+
 const DOMINANCE_FLOOR = 0.5; // the dominance threshold is user-adjustable down to 0.5, never lower
 
-const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
+// `params` carries the kind's init-params contract, undefined outside a template.
+const dataModel = new DataModelBuilder({ kind }).from<BlockData>("v1").init(({ params }) => ({
+  datasetRef: params?.datasetRef,
+  filterRef: params?.filterRef,
   integrations: [],
   customBlockLabel: "",
   defaultBlockLabel: "",
@@ -149,7 +159,7 @@ function graphPFrame(
   }
 }
 
-export const platforma = BlockModelV3.create(dataModel)
+export const platforma = BlockModelV3.create({ dataModel, kind })
   .args<BlockArgs>((data) => {
     if (!data.datasetRef) throw new Error("Select a VDJ single-cell dataset");
     const integrations = data.integrations ?? [];
@@ -179,6 +189,11 @@ export const platforma = BlockModelV3.create(dataModel)
       }));
     return {
       datasetRef: data.datasetRef,
+      // The subset's canonical column id, which the workflow stamps as the outputs'
+      // `pl7.app/inputSubset`. Absent without a filter, so unfiltered args are unchanged.
+      ...(data.filterRef !== undefined && {
+        inputFilter: createGlobalPObjectId(data.filterRef.blockId, data.filterRef.name),
+      }),
       featureColumnId: feature?.ref,
       featureLabel: feature?.label,
       featureDominanceThreshold: dom(feature),
@@ -197,14 +212,27 @@ export const platforma = BlockModelV3.create(dataModel)
       defaultBlockLabel: data.defaultBlockLabel ?? "",
     };
   })
-  // VDJ single-cell dataset anchor: columns keyed on [sampleId, scClonotypeKey] flagged as anchors
-  .output("datasetOptions", (ctx) =>
-    ctx.resultPool.getOptions([
-      {
-        axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
-        annotations: { "pl7.app/isAnchor": "true" },
-      },
-    ]),
+  // Inverse of the kind's init-params contract: the same fields `init` consumes.
+  .templateParams((data) => ({ datasetRef: data.datasetRef, filterRef: data.filterRef }))
+  // VDJ single-cell dataset anchors ([sampleId, scClonotypeKey]), each with its subset columns
+  // (e.g. Repertoire Labeling labels) as filters.
+  .output(
+    "datasetOptions",
+    (ctx): DatasetOption[] =>
+      buildDatasetOptions(ctx, {
+        primary: (spec) =>
+          isPColumnSpec(spec) &&
+          spec.annotations?.["pl7.app/isAnchor"] === "true" &&
+          spec.axesSpec.length === 2 &&
+          spec.axesSpec[0].name === "pl7.app/sampleId" &&
+          DATASET_KEY_AXES.has(spec.axesSpec[1].name),
+        // Only subsets keyed by the clonotype axis alone
+        filter: (spec) =>
+          isPColumnSpec(spec) &&
+          spec.axesSpec.length === 1 &&
+          DATASET_KEY_AXES.has(spec.axesSpec[0].name),
+        requireEnrichments: false,
+      }) ?? [],
   )
   // The per-cell columns the user can add as integrations. Feature-kind is the featureId-axis UMI matrix
   // (one column carrying every feature); annotation-kind is any [sampleId, cellId] String column. Values
@@ -326,7 +354,7 @@ export const platforma = BlockModelV3.create(dataModel)
   })
   .title(() => "Clonotype Multiomic Integration")
   // Subtitle = the block label: the user's override, else the input-derived default (the selected
-  // dataset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
+  // dataset's or subset's label, synced into data by the UI). The same label feeds the trace (args), so distinct
   // VDJM instances are distinguishable both here and in downstream Lead Selection column labels.
   .subtitle((ctx) => ctx.data.customBlockLabel || ctx.data.defaultBlockLabel)
   // The plot pages read the feature binding profile (the [scClonotypeKey, featureId] fraction matrix and
@@ -380,5 +408,10 @@ export const platforma = BlockModelV3.create(dataModel)
 export type BlockOutputs = InferOutputsType<typeof platforma>;
 export type { BlockArgs, BlockData, IntegrationEntry, IntegrationKind } from "./types";
 // Re-exported for the UI package (which depends on this model package, not @platforma-sdk/model directly).
-export { createPlDataTableStateV2 } from "@platforma-sdk/model";
-export type { PlRef } from "@platforma-sdk/model";
+export {
+  createDatasetSelection,
+  createPlDataTableStateV2,
+  createPrimaryRef,
+  plRefsEqual,
+} from "@platforma-sdk/model";
+export type { DatasetSelection, PlRef } from "@platforma-sdk/model";

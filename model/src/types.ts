@@ -38,6 +38,7 @@ export type IntegrationEntry = {
  */
 export type BlockArgs = {
   datasetRef: PlRef; // VDJ single-cell dataset (the cellLinker anchor)
+  inputFilter?: string; // canonical id of the subset column, only when a subset is picked
   // The first feature-kind integration's per-cell UMI-count column, when one is present.
   // Optional: the block also runs on VDJ + annotations with no features.
   featureColumnId?: SUniversalPColumnId;
@@ -62,6 +63,8 @@ export type BlockArgs = {
 /** Unified persisted UI + grid state (designed on the UI's terms). */
 export type BlockData = {
   datasetRef?: PlRef;
+  /** Subset column picked with the dataset in PlDatasetSelector (e.g. a Repertoire Labeling label). */
+  filterRef?: PlRef;
   // The per-cell integrations the user has added (generic add-list). Array so the UI owns display order;
   // the args lambda projects it to the workflow's column slots. Per-integration thresholds live on each entry.
   integrations: IntegrationEntry[];

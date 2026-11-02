@@ -1,4 +1,7 @@
-import { platforma } from "@platforma-open/milaboratories.vdj-multiomic-integration.model";
+import {
+  platforma,
+  plRefsEqual,
+} from "@platforma-open/milaboratories.vdj-multiomic-integration.model";
 import { defineAppV3 } from "@platforma-sdk/ui-vue";
 import { watchEffect } from "vue";
 import CompositionPage from "./pages/CompositionPage.vue";
@@ -12,14 +15,16 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
   // Keep the default block label in sync with the selected dataset's label, so the subtitle and the
   // downstream trace prefix reflect this instance's input. This output -> data write is intentional and
   // narrow: it only writes the derived default, never the user's customBlockLabel.
+  // The subset's label when one is picked: it already carries the dataset as a prefix.
   watchEffect(() => {
-    const datasetRef = app.model.data.datasetRef;
-    const options = app.model.outputs.datasetOptions ?? [];
-    const match = datasetRef
-      ? options.find(
-          (o) => o.ref?.blockId === datasetRef.blockId && o.ref?.name === datasetRef.name,
-        )
+    const { datasetRef, filterRef } = app.model.data;
+    const option = datasetRef
+      ? app.model.outputs.datasetOptions?.find((o) => plRefsEqual(o.primary.ref, datasetRef, true))
       : undefined;
+    const filter = filterRef
+      ? option?.filters?.find((f) => plRefsEqual(f.ref, filterRef, true))
+      : undefined;
+    const match = filter ?? option?.primary;
     // No dots in the derived default: a dataset label like "Donor.1" would otherwise carry the dot into
     // the subtitle and, through args, into the pl7.app/trace label on every emitted column. Replace dots
     // with spaces (not strip them) so separated tokens stay legible, then collapse and trim adjacent
